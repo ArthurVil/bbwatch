@@ -6,7 +6,6 @@ deleting oldest segments when necessary.
 
 import logging
 import threading
-import time
 from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)

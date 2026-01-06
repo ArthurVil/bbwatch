@@ -1,9 +1,6 @@
 """Unit tests for storage management."""
 
 import time
-from pathlib import Path
-
-import pytest
 
 from bbwatch.storage import (
     StorageManager,

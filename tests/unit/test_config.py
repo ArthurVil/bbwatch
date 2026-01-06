@@ -1,7 +1,5 @@
 """Unit tests for configuration management."""
 
-from pathlib import Path
-
 import pytest
 
 from bbwatch.config import (

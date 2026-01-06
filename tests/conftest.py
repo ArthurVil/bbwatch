@@ -1,7 +1,5 @@
 """Pytest configuration and shared fixtures for bbwatch tests."""
 
-import shutil
-import tempfile
 from pathlib import Path
 
 import numpy as np

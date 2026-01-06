@@ -8,7 +8,6 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Optional
 
 LOGGER = logging.getLogger(__name__)
 
@@ -90,7 +89,7 @@ def generate_overlay_set(overlay_dir: Path, width: int = 640, height: int = 480)
     LOGGER.info(f"Generated overlay set in {overlay_dir}")
 
 
-def read_status(status_file: Path) -> Optional[dict]:
+def read_status(status_file: Path) -> dict | None:
     """Read the current status from status.json.
 
     Args:

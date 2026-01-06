@@ -2,11 +2,10 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
 
+import yaml
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import yaml
 
 LOGGER = logging.getLogger(__name__)
 
@@ -137,7 +136,7 @@ class BBWatchConfig(BaseSettings):
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML in config file: {e}") from e
 
-    def resolve_paths(self, base_dir: Optional[Path] = None) -> "BBWatchConfig":
+    def resolve_paths(self, base_dir: Path | None = None) -> "BBWatchConfig":
         """Resolve relative paths to absolute paths.
 
         Args:

@@ -9,8 +9,6 @@ import json
 import logging
 import time
 from dataclasses import asdict, dataclass
-from pathlib import Path
-from typing import Optional
 
 from bbwatch.config import AlertConfig
 
@@ -69,7 +67,6 @@ class AlertManager:
             Current status object.
         """
         now = time.time()
-        previous_state = self._state
 
         if self._state == AlertState.IDLE:
             if intensity > self.config.trigger_high:

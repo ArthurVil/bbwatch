@@ -2,12 +2,10 @@
 
 import json
 import time
-from pathlib import Path
-from unittest.mock import Mock, patch
 
 import pytest
 
-from bbwatch.alert import AlertManager, AlertState, AlertStatus
+from bbwatch.alert import AlertManager, AlertState
 from bbwatch.config import AlertConfig
 
 

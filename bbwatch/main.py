@@ -6,7 +6,6 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 from watchdog.observers import Observer
 
@@ -46,7 +45,7 @@ class BabyMonitor:
     storage management, and overlay updates.
     """
 
-    def __init__(self, config_path: Optional[Path] = None) -> None:
+    def __init__(self, config_path: Path | None = None) -> None:
         """Initialize the baby monitor.
 
         Args:
@@ -66,16 +65,16 @@ class BabyMonitor:
         LOGGER.info(f"Data directory: {self.config.data_dir}")
 
         # Component references (initialized in start())
-        self._capture: Optional[SlidingWindowCapture] = None
-        self._storage: Optional[StorageManager] = None
-        self._observer: Optional[Observer] = None
-        self._overlay: Optional[OverlayController] = None
-        self._alert_manager: Optional[AlertManager] = None
+        self._capture: SlidingWindowCapture | None = None
+        self._storage: StorageManager | None = None
+        self._observer: Observer | None = None
+        self._overlay: OverlayController | None = None
+        self._alert_manager: AlertManager | None = None
         self._running = False
 
         # Detected hardware
-        self._audio_device: Optional[str] = None
-        self._video_device: Optional[str] = None
+        self._audio_device: str | None = None
+        self._video_device: str | None = None
 
     def _detect_hardware(self) -> bool:
         """Detect and validate hardware.
