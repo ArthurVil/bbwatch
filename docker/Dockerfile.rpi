@@ -1,0 +1,37 @@
+# docker/Dockerfile.rpi
+FROM python:3.11-slim-bookworm
+
+LABEL maintainer="bbwatch contributors"
+LABEL description="Production environment for bbwatch on Raspberry Pi"
+
+# System dependencies (ARM64-native)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    alsa-utils \
+    v4l-utils \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Python dependencies
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY bbwatch/ ./bbwatch/
+COPY config.yaml ./
+
+# Run as non-root user
+RUN useradd -m bbwatch && chown -R bbwatch:bbwatch /app
+USER bbwatch
+
+# Create data directories
+RUN mkdir -p /app/wav_segments /app/overlays
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import json; s=json.load(open('/app/status.json')); exit(0 if s.get('system_status')=='ok' else 1)" || exit 1
+
+# Entry point
+CMD ["python", "-m", "bbwatch.main"]

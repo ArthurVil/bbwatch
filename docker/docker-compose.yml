@@ -1,0 +1,39 @@
+# docker/docker-compose.yml
+version: '3.8'
+
+services:
+  bbwatch:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - ..:/app
+      - test_data:/app/wav_segments
+    environment:
+      - BBWATCH_LOG_LEVEL=DEBUG
+      - BBWATCH_FAKE_HARDWARE=true
+    ports:
+      - "1984:1984"   # go2rtc web UI
+      - "8554:8554"   # RTSP
+    # Uncomment for real hardware access:
+    # devices:
+    #   - /dev/video0:/dev/video0
+    #   - /dev/snd:/dev/snd
+    # group_add:
+    #   - audio
+    #   - video
+    command: pytest -v tests/
+
+  # Fake audio generator for integration testing
+  audio_generator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - test_data:/app/wav_segments
+    command: python scripts/generate_test_audio.py --output /app/wav_segments --loop
+    profiles:
+      - integration
+
+volumes:
+  test_data:

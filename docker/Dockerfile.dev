@@ -1,0 +1,29 @@
+# docker/Dockerfile.dev
+FROM python:3.11-slim-bookworm
+
+LABEL maintainer="bbwatch contributors"
+LABEL description="Development environment for bbwatch baby monitor"
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    alsa-utils \
+    v4l-utils \
+    libsndfile1 \
+    pulseaudio \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Python dependencies
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
+
+# Copy source
+COPY . .
+
+# Install package in editable mode
+RUN pip install -e .
+
+# Default command: run tests
+CMD ["pytest", "-v", "--tb=short"]
