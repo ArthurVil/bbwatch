@@ -42,6 +42,49 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 
 
+def record_with_arecord(config: BBWatchConfig, duration: float, device: str):
+    """Record using arecord subprocess (fallback for when PortAudio misses devices)."""
+    import subprocess
+    import numpy as np
+
+    cmd = [
+        "arecord",
+        "-D",
+        device,
+        "-f",
+        "S32_LE",
+        "-r",
+        str(config.audio.sample_rate),
+        "-c",
+        str(config.audio.channels),
+        "-d",
+        str(int(duration) + 1),
+        "-t",
+        "raw",
+    ]
+    print(f"🎤 Recording with arecord: {' '.join(cmd)}")
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        bytes_per_sample = 4
+        expected_samples = int(duration * config.audio.sample_rate)
+        total_bytes = expected_samples * bytes_per_sample * config.audio.channels
+        data_bytes = proc.stdout.read(total_bytes)
+        proc.terminate()
+        if len(data_bytes) == 0:
+            stderr = proc.stderr.read().decode()
+            raise RuntimeError(f"arecord failed/empty: {stderr}")
+        audio = np.frombuffer(data_bytes, dtype=np.int32)
+        audio = audio.astype(np.float32) / np.iinfo(np.int32).max
+        if config.audio.channels > 1:
+            audio = audio.reshape(-1, config.audio.channels)
+        if len(audio) > expected_samples:
+            audio = audio[:expected_samples]
+        return audio
+    except FileNotFoundError:
+        print("❌ 'arecord' not found. Please install alsa-utils.")
+        raise
+
+
 def record_and_detect(config: BBWatchConfig, duration: float = 3.0) -> bool:
     """Record from microphone and run detection.
 
@@ -121,7 +164,7 @@ def record_and_detect(config: BBWatchConfig, duration: float = 3.0) -> bool:
         return False
 
     # Run detection
-    is_cry, rms, active_ratio = detect_cry(
+    result = detect_cry(
         wav_path=tmp_path,
         lowcut=config.detection.bandpass_low_hz,
         highcut=config.detection.bandpass_high_hz,
@@ -130,16 +173,16 @@ def record_and_detect(config: BBWatchConfig, duration: float = 3.0) -> bool:
     )
 
     print(f"📊 Results:")
-    print(f"   RMS Energy:    {rms:.4f} (threshold: {config.detection.rms_threshold:.4f})")
-    print(f"   Active Ratio:  {active_ratio:.2%} (min: {config.detection.min_active_ratio:.0%})")
+    print(f"   RMS Energy:    {result.filtered_rms:.4f} (threshold: {config.detection.rms_threshold:.4f})")
+    print(f"   Active Ratio:  {result.active_ratio:.2%} (min: {config.detection.min_active_ratio:.0%})")
     print()
 
-    if is_cry:
+    if result.is_cry:
         print("🔴 ALERT: Cry/loud noise detected!")
     else:
         print("🟢 OK: No cry detected")
 
-    return is_cry
+    return result.is_cry
 
 
 def main() -> int:
