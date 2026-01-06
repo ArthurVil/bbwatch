@@ -1,0 +1,33 @@
+# Audio capture configuration
+audio:
+  segment_duration_s: 3.0
+  overlap_s: 1.0
+  sample_rate: 16000
+  channels: 1
+
+# Cry detection parameters
+detection:
+  bandpass_low_hz: 250.0
+  bandpass_high_hz: 800.0
+  rms_threshold: 0.02
+  min_active_ratio: 0.3
+  silence_threshold: 0.001
+
+# Disk storage limits
+storage:
+  wav_dir: wav_segments
+  max_size_mb: 1024.0
+  delete_empty_segments: true
+  cleanup_interval_s: 60.0
+
+# Alert configuration
+alerts:
+  status_file: status.json
+  overlay_dir: overlays
+  alert_cooldown_s: 5.0
+  health_timeout_s: 10.0
+
+# Runtime options
+log_level: INFO
+fake_hardware: false
+data_dir: ~/bbwatch_data
