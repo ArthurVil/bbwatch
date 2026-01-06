@@ -16,6 +16,7 @@ help:
 	@echo "  make docker-build      Build development image"
 	@echo "  make docker-test       Run tests in Docker"
 	@echo "  make docker-demo       Run audio demo with mic passthrough"
+	@echo "  make docker-demo-video Run video demo with webcam (requires X11)"
 	@echo "  make docker-shell      Interactive shell in container"
 	@echo "  make docker-build-rpi  Cross-compile ARM64 image for Raspberry Pi"
 	@echo ""

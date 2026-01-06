@@ -1,11 +1,24 @@
 #!/usr/bin/env python3
 """Demo script for testing bbwatch audio detection.
 
-Records audio from your microphone and runs cry detection.
+This script demonstrates the core audio detection pipeline of bbwatch.
+It records audio from your default microphone input and processes it using
+the same DSP logic (bandpass filter + RMS energy) used in the main application.
+
+Features:
+- Real-time recording from microphone
+- Configurable recording duration
+- Loop mode for continuous monitoring
+- Visual feedback on detection (RMS energy, active ratio)
 
 Usage:
-    python scripts/demo_audio.py
-    python scripts/demo_audio.py --duration 5
+    python scripts/demo.py              # Record 3s and analyze
+    python scripts/demo.py --loop       # Run continuously
+    python scripts/demo.py --duration 5 # Record 5s segments
+
+Requirements:
+    pip install sounddevice numpy scipy
+    (Included in `make install-dev`)
 """
 
 import argparse

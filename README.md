@@ -17,116 +17,133 @@ A fully open-source baby monitor built for Raspberry Pi with USB webcam. Feature
 
 ### Development (Docker)
 
+The easiest way to get started is using Docker.
+
 ```bash
 # Clone and enter directory
-git clone https://github.com/bbwatch/bbwatch.git
+git clone https://github.com/ArthurVil/bbwatch.git
 cd bbwatch
 
 # Run tests
-docker compose -f docker/docker-compose.yml run --rm bbwatch pytest -v
+make docker-test
 
-# Interactive shell
-docker compose -f docker/docker-compose.yml run --rm bbwatch bash
+# Run audio demo (records from mic)
+make docker-demo
+
+# Run video demo (requires webcam + X11)
+make docker-demo-video
 ```
 
 ### Development (Local)
 
 ```bash
 # Create virtual environment
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 
-# Install dependencies
-pip install -e ".[dev]"
+# Install dependencies (including dev tools)
+make install-dev
 
-# Generate test fixtures
-python scripts/generate_test_audio.py
+# List available hardware devices
+make devices
 
 # Run tests
-pytest -v
+make test
 ```
 
 ### Raspberry Pi Deployment
 
-```bash
-# Set your Pi's hostname
-export RPI_HOST=babypi.local
+1. **Prerequisites**:
+   - Raspberry Pi 4 (2GB+ recommended)
+   - Docker & Docker Compose installed
+   - USB Webcam with microphone connected
 
-# Deploy
-./scripts/deploy.sh
-```
+2. **Deploy**:
+   ```bash
+   # Set your Pi's hostname or IP
+   export RPI_HOST=babypi.local
+
+   # Copy files and start services
+   ./scripts/deploy.sh
+   ```
 
 ## Configuration
 
-Copy `config.yaml` and adjust as needed:
+Copy `config.yaml` to customize settings:
 
 ```yaml
 audio:
-  segment_duration_s: 3.0    # Audio segment length
-  overlap_s: 1.0             # Overlap for sliding window
+  segment_duration_s: 3.0    # Duration of analysis window
+  overlap_s: 1.0             # Sliding window overlap
+  sample_rate: 16000         # 16kHz is sufficient for cry detection
 
 detection:
-  bandpass_low_hz: 250.0     # Baby cry low frequency
-  bandpass_high_hz: 800.0    # Baby cry high frequency
-  rms_threshold: 0.02        # Energy threshold
-  min_active_ratio: 0.3      # % of segment with activity
+  bandpass_low_hz: 250.0     # Typical baby cry fundamental freq start
+  bandpass_high_hz: 800.0    # Typical baby cry fundamental freq end
+  rms_threshold: 0.02        # Sensitivity (lower = more sensitive)
+  min_active_ratio: 0.3      # % of segment that must be loud to trigger
+
+alerts:
+  trigger_high: 0.03         # Hysteresis: start alert above this
+  trigger_low: 0.015         # Hysteresis: stop alert below this
+  cooldown_s: 5.0            # Minimum time between alerts
 
 storage:
-  max_size_mb: 1024.0        # Max disk usage (1GB)
-  delete_empty_segments: true
+  max_size_mb: 1024.0        # Max disk usage for recordings
 ```
 
 ## Architecture
 
-```
-USB Camera ─┬─► go2rtc ──────────────────► VLC / Browser
-            │      ▲
-USB Mic ────┘      │ overlay control
-     │             │
-     ▼             │
-  ffmpeg ──► .wav ──► Python detector ────┘
+```mermaid
+graph TD
+    Cam[USB Camera] -->|Video| Go2RTC[go2rtc Streaming Server]
+    Mic[USB Mic] -->|Audio| FFmpeg[FFmpeg Capture]
+    
+    FFmpeg -->|WAV Segments| Detector[Python Detector]
+    Detector -->|Analysis| Logic{Cry Detected?}
+    
+    Logic -->|Yes| Alert[Alert Manager]
+    Logic -->|No| Store[Storage Manager]
+    
+    Alert -->|Red Overlay| Overlay[Overlay Controller]
+    Alert -->|Status File| Go2RTC
+    
+    Go2RTC -->|WebRTC/RTSP| Client[Phone/Browser]
+    Overlay -->|FFmpeg Filter| Go2RTC
 ```
 
 ## Project Structure
 
 ```
 bbwatch/
-├── bbwatch/              # Python package
-│   ├── config.py         # Pydantic configuration
-│   ├── hardware.py       # Device detection
-│   ├── capture.py        # FFmpeg audio capture
-│   ├── detector.py       # Cry detection
-│   ├── storage.py        # Disk management
-│   ├── overlay.py        # Video overlay
-│   └── main.py           # Entry point
-├── docker/               # Docker files
-├── tests/                # Test suite
-├── scripts/              # Deployment scripts
-└── config.yaml           # Default configuration
+├── bbwatch/              # Python package source
+│   ├── config.py         # Configuration management
+│   ├── detector.py       # DSP-based cry detection
+│   ├── hardware.py       # Hardware discovery
+│   └── main.py           # Application entry point
+├── docker/               # Docker environments
+│   ├── Dockerfile.dev    # x86_64 dev image
+│   └── Dockerfile.rpi    # ARM64 production image
+├── scripts/              # Helper scripts
+│   ├── demo.py           # Audio detection demo
+│   ├── demo_video.py     # Video overlay demo
+│   └── list_devices.py   # Hardware discovery tool
+└── tests/                # Pytest suite
 ```
 
-## Viewing the Stream
+## Development Commands
 
-- **Browser**: `http://<PI_IP>:1984`
-- **VLC**: `rtsp://<PI_IP>:8554/babycam`
-- **Android VLC**: Open network stream → enter RTSP URL
+We provide a `Makefile` for common tasks:
 
-## Requirements
-
-### Raspberry Pi
-- Raspberry Pi 4 (2GB+ RAM recommended)
-- USB webcam with microphone
-- Docker installed
-
-### Development
-- Python 3.10+
-- FFmpeg
-- Docker (optional)
+| Command | Description |
+|---------|-------------|
+| `make install-dev` | Install all dependencies |
+| `make test` | Run unit and integration tests |
+| `make lint` | Run ruff (linting) and mypy (types) |
+| `make docker-build` | Build local dev image |
+| `make docker-demo` | Run audio demo in Docker |
+| `make docker-build-rpi` | Cross-compile ARM64 image |
 
 ## License
 
 MIT License - see [LICENSE](LICENSE)
-
-## Contributing
-
-Contributions welcome! Please open an issue first to discuss changes.

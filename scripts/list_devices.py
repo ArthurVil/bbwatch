@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""List available audio and video devices.
+"""Hardware discovery utility for bbwatch.
+
+This script scans the system for available audio and video hardware
+that can be used by bbwatch. It checks:
+1. ALSA audio capture devices (arecord)
+2. PulseAudio/PipeWire sources (pactl)
+3. V4L2 video devices (v4l2-ctl)
+4. /dev/video* device files
+
+It also suggests the correct Docker arguments (`--device ...`) to expose
+these devices to the bbwatch container.
 
 Usage:
     python scripts/list_devices.py

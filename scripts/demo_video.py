@@ -1,11 +1,30 @@
 #!/usr/bin/env python3
-"""Demo script for testing bbwatch video streaming.
+"""Demo script for testing bbwatch video streaming and overlays.
 
-Opens webcam and displays video with overlay capability.
+This script demonstrates the video capture and visual overlay system.
+It connects to a webcam, displays the live feed, and allows you to
+manually trigger the visual alerts that would normally be triggered
+by the audio detector.
+
+Features:
+- Webcam capture via OpenCV
+- Real-time overlay composition (Red/Blue tints)
+- Text overlay for status messages
+- Keyboard controls for simulation
+
+Controls:
+    'r': Toggle RED overlay (Simulate Cry Alert)
+    'b': Toggle BLUE overlay (Simulate System Error)
+    'n': Clear active overlays
+    'q': Quit
 
 Usage:
     python scripts/demo_video.py
-    python scripts/demo_video.py --device /dev/video0
+    python scripts/demo_video.py --device 1  # Use /dev/video1
+
+Requirements:
+    pip install opencv-python
+    (Included in `make install-dev`)
 """
 
 import argparse
