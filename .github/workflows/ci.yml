@@ -3,8 +3,13 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   test:
@@ -28,38 +33,64 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
-          pip install -e .
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -e ".[dev]"
 
       - name: Generate test fixtures
-        run: python scripts/generate_test_audio.py --output tests/fixtures
+        run: python3 scripts/generate_test_audio.py --output tests/fixtures
 
       - name: Run linting
-        run: ruff check bbwatch/ tests/
+        run: python3 -m ruff check bbwatch/ tests/
 
       - name: Run type checking
-        run: mypy bbwatch/ --ignore-missing-imports
+        run: python3 -m mypy bbwatch/ --ignore-missing-imports
 
       - name: Run unit tests
-        run: pytest tests/unit/ -v --tb=short --cov=bbwatch --cov-report=xml
+        run: python3 -m pytest tests/unit/ -v --tb=short --cov=bbwatch --cov-report=xml
 
       - name: Run integration tests
-        run: pytest tests/integration/ -v --tb=short
+        run: python3 -m pytest tests/integration/ -v --tb=short
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           files: coverage.xml
           fail_ci_if_error: false
 
   docker-build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build development image
         uses: docker/build-push-action@v5
@@ -71,13 +102,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build ARM64 image (for Raspberry Pi)
+      - name: Build and push ARM64 image (Raspberry Pi)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/Dockerfile.rpi
-          push: false
+          push: ${{ github.event_name != 'pull_request' }}
           platforms: linux/arm64
-          tags: bbwatch:rpi
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rpi-latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rpi-${{ github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
