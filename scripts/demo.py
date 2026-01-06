@@ -59,37 +59,54 @@ def record_and_detect(config: BBWatchConfig, duration: float = 3.0) -> bool:
         print("❌ sounddevice not installed. Run: pip install sounddevice")
         sys.exit(1)
 
-    print(f"\n{'=' * 60}")
-    print(f"🎤 BBWatch Audio Detection Demo")
-    print(f"{'=' * 60}")
+    print("=" * 60)
+    print("🎤 BBWatch Audio Detection Demo")
+    print("=" * 60)
     print(f"Duration: {duration}s | Sample rate: {config.audio.sample_rate} Hz")
     print(f"Bandpass: {config.detection.bandpass_low_hz}-{config.detection.bandpass_high_hz} Hz")
     print(f"RMS Threshold: {config.detection.rms_threshold}")
     print()
 
-    # Show available audio devices
-    print("Available audio devices:")
-    devices = detect_audio_devices()
-    if devices:
-        for dev in devices:
+    # Show available audio devices (SoundDevice / PortAudio)
+    print("Available audio devices (PortAudio indices):")
+    try:
+        print(sd.query_devices())
+    except Exception as e:
+        print(f"Could not query devices: {e}")
+    print()
+
+    # Also show system hardware (ALSA) for reference
+    print("System hardware (ALSA):")
+    sys_devices = detect_audio_devices()
+    if sys_devices:
+        for dev in sys_devices:
             print(f"  {dev}")
     else:
-        print("  (using system default)")
+        print("  (no ALSA devices found)")
     print()
 
     # Record
     print(f"🔴 Recording for {duration}s... (make some noise!)")
     try:
+        device = config.audio.device_index
+        if device is not None:
+            print(f"🎤 Using configured device: {device}")
+
         audio = sd.rec(
             int(duration * config.audio.sample_rate),
             samplerate=config.audio.sample_rate,
             channels=config.audio.channels,
             dtype="float32",
+            device=device,
         )
         sd.wait()
     except Exception as e:
         print(f"❌ Recording failed: {e}")
-        print('   Try: python -c "import sounddevice; print(sounddevice.query_devices())"')
+        try:
+            print("\nDevice capabilities:")
+            print(sd.query_devices())
+        except Exception:
+            pass
         return False
 
     print("✅ Recording complete!\n")
@@ -136,6 +153,12 @@ def main() -> int:
         type=float,
         default=3.0,
         help="Recording duration in seconds (default: 3.0)",
+    )
+
+    parser.add_argument(
+        "--list-only",
+        action="store_true",
+        help="List available devices and exit",
     )
 
     parser.add_argument(

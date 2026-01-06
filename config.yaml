@@ -2,9 +2,10 @@
 audio:
   segment_duration_s: 3.0
   overlap_s: 1.0
-  sample_rate: 16000
+  sample_rate: 48000
   channels: 1
-
+  device_index: "WEBCAM" 
+  
 # Cry detection parameters
 detection:
   bandpass_low_hz: 250.0

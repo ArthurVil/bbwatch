@@ -18,6 +18,7 @@ class AudioConfig(BaseModel):
     overlap_s: float = Field(default=1.0, ge=0.0)
     sample_rate: int = Field(default=16000, ge=8000, le=48000)
     channels: int = Field(default=1, ge=1, le=2)
+    device_index: str = Field(default="0")
 
     @field_validator("overlap_s")
     @classmethod
