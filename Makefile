@@ -47,6 +47,9 @@ lint:
 	python3 -m ruff check bbwatch/ tests/
 	python3 -m mypy bbwatch/ --ignore-missing-imports
 
+format-unsafe:
+	python3 -m ruff check bbwatch/ tests/ --fix --unsafe-fixes
+
 format:
 	python3 -m ruff check bbwatch/ tests/ --fix
 	python3 -m ruff format bbwatch/ tests/
@@ -73,8 +76,11 @@ docker-demo: docker-build
 	@echo "Starting audio demo with microphone passthrough..."
 	@echo "Press Ctrl+C to stop"
 	docker run --rm -it \
+		--privileged \
 		--device /dev/snd:/dev/snd \
+		--device /dev/bus/usb:/dev/bus/usb \
 		--group-add audio \
+		-e PA_ALSA_PLUGHW=1 \
 		-v $(PWD):/app \
 		$(DOCKER_IMAGE):$(DOCKER_TAG) \
 		python3 scripts/demo.py --loop
@@ -83,11 +89,14 @@ docker-demo-video: docker-build
 	@echo "Starting video demo with webcam passthrough..."
 	@echo "Requires X11 forwarding: export DISPLAY and mount /tmp/.X11-unix"
 	docker run --rm -it \
+		--privileged \
 		--device /dev/video0:/dev/video0 \
 		--device /dev/snd:/dev/snd \
+		--device /dev/bus/usb:/dev/bus/usb \
 		--group-add video \
 		--group-add audio \
 		-e DISPLAY=$(DISPLAY) \
+		-e PA_ALSA_PLUGHW=1 \
 		-v /tmp/.X11-unix:/tmp/.X11-unix \
 		-v $(PWD):/app \
 		$(DOCKER_IMAGE):$(DOCKER_TAG) \
@@ -95,11 +104,14 @@ docker-demo-video: docker-build
 
 docker-shell: docker-build
 	docker run --rm -it \
+		--privileged \
 		--device /dev/snd:/dev/snd \
 		--device /dev/video0:/dev/video0 \
+		--device /dev/bus/usb:/dev/bus/usb \
 		--group-add audio \
 		--group-add video \
 		-e DISPLAY=$(DISPLAY) \
+		-e PA_ALSA_PLUGHW=1 \
 		-v /tmp/.X11-unix:/tmp/.X11-unix \
 		-v $(PWD):/app \
 		$(DOCKER_IMAGE):$(DOCKER_TAG) \
