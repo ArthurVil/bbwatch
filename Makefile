@@ -84,7 +84,9 @@ docker-demo-video: docker-build
 	@echo "Requires X11 forwarding: export DISPLAY and mount /tmp/.X11-unix"
 	docker run --rm -it \
 		--device /dev/video0:/dev/video0 \
+		--device /dev/snd:/dev/snd \
 		--group-add video \
+		--group-add audio \
 		-e DISPLAY=$(DISPLAY) \
 		-v /tmp/.X11-unix:/tmp/.X11-unix \
 		-v $(PWD):/app \
@@ -93,6 +95,12 @@ docker-demo-video: docker-build
 
 docker-shell: docker-build
 	docker run --rm -it \
+		--device /dev/snd:/dev/snd \
+		--device /dev/video0:/dev/video0 \
+		--group-add audio \
+		--group-add video \
+		-e DISPLAY=$(DISPLAY) \
+		-v /tmp/.X11-unix:/tmp/.X11-unix \
 		-v $(PWD):/app \
 		$(DOCKER_IMAGE):$(DOCKER_TAG) \
 		/bin/bash

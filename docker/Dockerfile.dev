@@ -12,6 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     libportaudio2 \
     pulseaudio \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libgtk2.0-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -21,8 +25,8 @@ COPY pyproject.toml ./
 COPY bbwatch/__init__.py ./bbwatch/
 
 # Install all dependencies including dev + demo extras
-RUN python3 -m pip install --no-cache-dir -e ".[dev]" && \
-    python3 -m pip install --no-cache-dir sounddevice opencv-python-headless
+# Note: demo extra includes opencv-python which needs the system libs above
+RUN python3 -m pip install --no-cache-dir -e ".[dev]"
 
 # Copy source
 COPY . .
