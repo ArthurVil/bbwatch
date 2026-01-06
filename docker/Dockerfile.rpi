@@ -14,13 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Python dependencies
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application
+# Copy project files for dependency installation
+COPY pyproject.toml ./
 COPY bbwatch/ ./bbwatch/
 COPY config.yaml ./
+
+# Install runtime dependencies only (no dev)
+RUN pip install --no-cache-dir .
 
 # Run as non-root user
 RUN useradd -m bbwatch && chown -R bbwatch:bbwatch /app

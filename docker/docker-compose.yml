@@ -2,6 +2,51 @@
 version: '3.8'
 
 services:
+  # Run tests
+  test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - ..:/app
+    command: python3 -m pytest tests/ -v --tb=short
+
+  # Audio demo with microphone passthrough
+  demo:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - ..:/app
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
+    environment:
+      - BBWATCH_LOG_LEVEL=DEBUG
+    command: python3 scripts/demo.py --loop
+    profiles:
+      - demo
+
+  # Video demo with webcam passthrough (requires X11)
+  demo-video:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - ..:/app
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    devices:
+      - /dev/video0:/dev/video0
+    group_add:
+      - video
+    environment:
+      - DISPLAY=${DISPLAY}
+    command: python3 scripts/demo_video.py
+    profiles:
+      - demo
+
+  # Full bbwatch with fake hardware (for development)
   bbwatch:
     build:
       context: ..
@@ -15,14 +60,23 @@ services:
     ports:
       - "1984:1984"   # go2rtc web UI
       - "8554:8554"   # RTSP
-    # Uncomment for real hardware access:
-    # devices:
-    #   - /dev/video0:/dev/video0
-    #   - /dev/snd:/dev/snd
-    # group_add:
-    #   - audio
-    #   - video
-    command: pytest -v tests/
+
+  # Interactive shell
+  shell:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - ..:/app
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+    profiles:
+      - dev
 
   # Fake audio generator for integration testing
   audio_generator:
@@ -31,7 +85,7 @@ services:
       dockerfile: docker/Dockerfile.dev
     volumes:
       - test_data:/app/wav_segments
-    command: python scripts/generate_test_audio.py --output /app/wav_segments --loop
+    command: python3 scripts/generate_test_audio.py --output /app/wav_segments --loop
     profiles:
       - integration
 

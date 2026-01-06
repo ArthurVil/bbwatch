@@ -10,20 +10,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     alsa-utils \
     v4l-utils \
     libsndfile1 \
+    libportaudio2 \
     pulseaudio \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Python dependencies
-COPY requirements.txt requirements-dev.txt ./
-RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
+# Copy project files for dependency installation
+COPY pyproject.toml ./
+COPY bbwatch/__init__.py ./bbwatch/
+
+# Install all dependencies including dev + demo extras
+RUN python3 -m pip install --no-cache-dir -e ".[dev]" && \
+    python3 -m pip install --no-cache-dir sounddevice opencv-python-headless
 
 # Copy source
 COPY . .
 
-# Install package in editable mode
-RUN pip install -e .
+# Reinstall in editable mode with full source
+RUN python3 -m pip install --no-cache-dir -e ".[dev]"
 
 # Default command: run tests
-CMD ["pytest", "-v", "--tb=short"]
+CMD ["python3", "-m", "pytest", "-v", "--tb=short"]
