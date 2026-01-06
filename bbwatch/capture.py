@@ -9,7 +9,6 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 LOGGER = logging.getLogger(__name__)
 
@@ -47,8 +46,8 @@ class AudioCapture:
         self.channels = channels
         self.prefix = prefix
 
-        self._process: Optional[subprocess.Popen] = None
-        self._monitor_thread: Optional[threading.Thread] = None
+        self._process: subprocess.Popen | None = None
+        self._monitor_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._restart_count = 0
         self._max_restarts = 10
@@ -123,8 +122,8 @@ class AudioCapture:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-        except FileNotFoundError:
-            raise RuntimeError("FFmpeg not found - please install ffmpeg")
+        except FileNotFoundError as e:
+            raise RuntimeError("FFmpeg not found - please install ffmpeg") from e
 
     def stop(self) -> None:
         """Stop audio capture gracefully."""
