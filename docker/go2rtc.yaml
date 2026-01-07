@@ -1,0 +1,20 @@
+streams:
+  # Main stream with overlay
+  # Reads video from /dev/video0
+  # Reads audio from ALSA (hw:0,0 or similar - adjusted for docker)
+  # Overlays image from /app/overlays/current.png
+  babycam:
+    - "exec:ffmpeg -hide_banner -v error \
+      -f v4l2 -i /dev/video0 \
+      -f alsa -i hw:1,0 \  # Update '1' to your device card index (arecord -l)
+      -loop 1 -i /app/overlays/current.png \
+      -filter_complex '[0:v][2:v]overlay=0:0' \
+      -c:v libx264 -preset ultrafast -tune zerolatency \
+      -c:a aac -b:a 128k \
+      -f rtsp rtsp://localhost:8554/babycam"
+
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
