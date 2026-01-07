@@ -64,22 +64,18 @@ def resolve_pulseaudio_source(alsa_device: str) -> str | None:
 
     target_card_idx = match.group(1)
 
-    try:
-        # Get sources in JSON format
-        result = subprocess.run(["pactl", "-f", "json", "list", "sources"], capture_output=True, text=True, check=True)
-        sources = json.loads(result.stdout)
+    # Get sources in JSON format
+    result = subprocess.run(["pactl", "-f", "json", "list", "sources"], capture_output=True, text=True, check=True)
+    sources = json.loads(result.stdout)
 
-        for source in sources:
-            props = source.get("properties", {})
-            # check both alsa.card and device.string approaches
-            card_idx = props.get("alsa.card")
+    for source in sources:
+        props = source.get("properties", {})
+        # check both alsa.card and device.string approaches
+        card_idx = props.get("alsa.card")
 
-            # If alsa.card matches our target
-            if card_idx == target_card_idx:
-                return source.get("name")
-
-    except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
-        pass
+        # If alsa.card matches our target
+        if card_idx == target_card_idx:
+            return source.get("name")
 
     return None
 
@@ -329,6 +325,7 @@ def record_and_detect(config: BBWatchConfig, duration: float = 3.0) -> bool:
         highcut=config.detection.bandpass_high_hz,
         rms_threshold=config.detection.rms_threshold,
         min_active_ratio=config.detection.min_active_ratio,
+        window_ms=config.detection.window_ms,
     )
 
     print(f"📊 Results:")

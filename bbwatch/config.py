@@ -37,6 +37,7 @@ class DetectionConfig(BaseModel):
     rms_threshold: float = Field(default=0.02, ge=0.001, le=1.0)
     min_active_ratio: float = Field(default=0.3, ge=0.0, le=1.0)
     silence_threshold: float = Field(default=0.001, ge=0.0, le=0.1)
+    window_ms: float = Field(default=100.0, ge=10.0, le=1000.0)
 
     @field_validator("bandpass_high_hz")
     @classmethod

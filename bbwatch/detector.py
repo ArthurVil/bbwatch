@@ -67,11 +67,11 @@ def butter_bandpass(
 
 def detect_cry(
     wav_path: str | Path,
-    lowcut: float = 250.0,
-    highcut: float = 800.0,
-    rms_threshold: float = 0.02,
-    min_active_ratio: float = 0.3,
-    window_ms: float = 100.0,
+    lowcut: float,
+    highcut: float,
+    rms_threshold: float,
+    min_active_ratio: float,
+    window_ms: float,
 ) -> DetectionResult:
     """Detect baby cry in audio segment.
 
@@ -249,6 +249,7 @@ class SegmentHandler(FileSystemEventHandler):
                 highcut=self.config.bandpass_high_hz,
                 rms_threshold=self.config.rms_threshold,
                 min_active_ratio=self.config.min_active_ratio,
+                window_ms=self.config.window_ms,
             )
         except Exception as e:
             LOGGER.error(f"Detection failed for {wav_path.name}: {e}")
