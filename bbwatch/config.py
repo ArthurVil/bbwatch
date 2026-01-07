@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOGGER = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ class AudioConfig(BaseModel):
 
     @field_validator("overlap_s")
     @classmethod
-    def overlap_less_than_duration(cls, v: float, info) -> float:
+    def overlap_less_than_duration(cls, v: float, info: ValidationInfo) -> float:
         """Ensure overlap is less than segment duration."""
         duration = info.data.get("segment_duration_s", 3.0)
         if v >= duration:
@@ -40,7 +40,7 @@ class DetectionConfig(BaseModel):
 
     @field_validator("bandpass_high_hz")
     @classmethod
-    def high_greater_than_low(cls, v: float, info) -> float:
+    def high_greater_than_low(cls, v: float, info: ValidationInfo) -> float:
         """Ensure high frequency is greater than low."""
         low = info.data.get("bandpass_low_hz", 250.0)
         if v <= low:
@@ -81,7 +81,7 @@ class AlertConfig(BaseModel):
 
     @field_validator("trigger_low")
     @classmethod
-    def low_less_than_high(cls, v: float, info) -> float:
+    def low_less_than_high(cls, v: float, info: ValidationInfo) -> float:
         """Ensure trigger_low is less than trigger_high for hysteresis."""
         high = info.data.get("trigger_high", 0.03)
         if v >= high:

@@ -8,6 +8,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import Any, cast
 
 LOGGER = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ def generate_overlay_set(overlay_dir: Path, width: int = 640, height: int = 480)
     LOGGER.info(f"Generated overlay set in {overlay_dir}")
 
 
-def read_status(status_file: Path) -> dict | None:
+def read_status(status_file: Path) -> dict[str, Any] | None:
     """Read the current status from status.json.
 
     Args:
@@ -103,7 +104,7 @@ def read_status(status_file: Path) -> dict | None:
             return None
 
         with open(status_file) as f:
-            return json.load(f)
+            return cast(dict[str, Any], json.load(f))
 
     except (json.JSONDecodeError, OSError) as e:
         LOGGER.warning(f"Failed to read status file: {e}")

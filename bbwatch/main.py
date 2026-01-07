@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from watchdog.observers import Observer
+from watchdog.observers.api import BaseObserver
 
 from bbwatch import __version__
 from bbwatch.alert import AlertManager
@@ -67,7 +68,7 @@ class BabyMonitor:
         # Component references (initialized in start())
         self._capture: SlidingWindowCapture | None = None
         self._storage: StorageManager | None = None
-        self._observer: Observer | None = None
+        self._observer: BaseObserver | None = None
         self._overlay: OverlayController | None = None
         self._alert_manager: AlertManager | None = None
         self._running = False
@@ -151,6 +152,9 @@ class BabyMonitor:
             recursive=False,
         )
         self._observer.start()
+
+        if self._audio_device is None:
+            raise RuntimeError("Audio device not initialized")
 
         # Start audio capture
         self._capture = SlidingWindowCapture(
@@ -289,7 +293,7 @@ def main() -> int:
         monitor.config.fake_hardware = True
 
     # Setup signal handlers
-    def signal_handler(signum, frame):
+    def signal_handler(signum: int, frame: object) -> None:
         LOGGER.info(f"Received signal {signum}")
         monitor.stop()
 

@@ -7,13 +7,12 @@ that uses DSP techniques rather than ML for the PoC phase.
 import logging
 import time
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import numpy as np
-import numpy.typing as npt
 import soundfile as sf
 from scipy.signal import butter, sosfilt
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
 from bbwatch.alert import AlertManager
 from bbwatch.config import DetectionConfig
@@ -35,7 +34,7 @@ def butter_bandpass(
     highcut: float,
     fs: int,
     order: int = 4,
-) -> npt.NDArray[np.float64]:
+) -> np.ndarray:
     """Design a Butterworth bandpass filter.
 
     Args:
@@ -62,7 +61,7 @@ def butter_bandpass(
     low = lowcut / nyq
     high = highcut / nyq
 
-    sos = butter(order, [low, high], btype="band", output="sos")
+    sos = cast(np.ndarray, butter(order, [low, high], btype="band", output="sos"))
     return sos
 
 
@@ -212,18 +211,22 @@ class SegmentHandler(FileSystemEventHandler):
         self.alert_manager = alert_manager
         self.delete_empty = delete_empty
 
-    def on_created(self, event) -> None:
+    def on_created(self, event: "FileSystemEvent") -> None:
         """Handle new file creation events."""
         if event.is_directory:
             return
 
-        if not event.src_path.endswith(".wav"):
+        src_path = event.src_path
+        if isinstance(src_path, bytes):
+            src_path = src_path.decode("utf-8")
+
+        if not src_path.endswith(".wav"):
             return
 
         # Wait briefly for file write
         time.sleep(0.3)
 
-        wav_path = Path(event.src_path)
+        wav_path = Path(src_path)
 
         if not wav_path.exists():
             return

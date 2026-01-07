@@ -143,8 +143,8 @@ def log_detected_hardware() -> tuple[list[AudioDevice], list[VideoDevice]]:
 
     LOGGER.info("Video Capture Devices:")
     if video_devices:
-        for dev in video_devices:
-            LOGGER.info(f"  {dev}")
+        for vdev in video_devices:
+            LOGGER.info(f"  {vdev}")
     else:
         LOGGER.warning("  No video capture devices found!")
 
