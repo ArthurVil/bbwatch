@@ -42,6 +42,117 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 
 
+def resolve_pulseaudio_source(alsa_device: str) -> str | None:
+    """Resolve ALSA device string (e.g. 'hw:1,0') to PulseAudio source name.
+
+    Args:
+        alsa_device: ALSA device string.
+
+    Returns:
+        PulseAudio source name (e.g. 'alsa_input.usb-...') or None if not found.
+    """
+    import subprocess
+    import json
+    import re
+
+    # Extract card index from alsa device string
+    # hw:1,0 -> card 1
+    # plughw:1,0 -> card 1
+    match = re.search(r"(?:hw|plughw):(\d+)", alsa_device)
+    if not match:
+        return None
+
+    target_card_idx = match.group(1)
+
+    try:
+        # Get sources in JSON format
+        result = subprocess.run(["pactl", "-f", "json", "list", "sources"], capture_output=True, text=True, check=True)
+        sources = json.loads(result.stdout)
+
+        for source in sources:
+            props = source.get("properties", {})
+            # check both alsa.card and device.string approaches
+            card_idx = props.get("alsa.card")
+
+            # If alsa.card matches our target
+            if card_idx == target_card_idx:
+                return source.get("name")
+
+    except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
+        pass
+
+    return None
+
+
+def record_with_pulseaudio(config: BBWatchConfig, duration: float, device_name: str):
+    """Record using PulseAudio (parecord/parec) when PulseAudio is holding the device."""
+    import subprocess
+    import numpy as np
+
+    # Try parecord first (newer), fall back to parec (older)
+    cmd_base = None
+    for cmd_name in ["parecord", "parec"]:
+        try:
+            subprocess.run([cmd_name, "--version"], capture_output=True, check=True, timeout=2)
+            cmd_base = cmd_name
+            break
+        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            continue
+
+    if cmd_base is None:
+        raise RuntimeError("Neither parecord nor parec found. Install pulseaudio-utils.")
+
+    # Resolve specific source if device name looks like an ALSA string (e.g. "hw:1,0")
+    if device_name.startswith("hw:") or device_name.startswith("plughw:"):
+        resolved_source = resolve_pulseaudio_source(device_name)
+        if resolved_source:
+            print(f"🔍 Resolved ALSA device '{device_name}' to PulseAudio source: '{resolved_source}'")
+            device_name = resolved_source
+        else:
+            print(f"⚠️  Could not resolve ALSA device '{device_name}' to PulseAudio source. Using raw name.")
+
+    # PulseAudio device name format: alsa_input.usb-ESSENTIELB_WEBCAM_ESSENTIELB_W1_SN0001-02.mono-fallback
+    # But we can also use the ALSA device directly if PulseAudio sees it
+    cmd = [
+        cmd_base,
+        "--device=" + device_name,
+        "--rate=" + str(config.audio.sample_rate),
+        "--channels=" + str(config.audio.channels),
+        "--format=s16le",
+        "--raw",
+    ]
+
+    print(f"🎤 Recording with {cmd_base}: {' '.join(cmd)}")
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        bytes_per_sample = 2  # S16_LE = 2 bytes
+        expected_samples = int(duration * config.audio.sample_rate)
+        total_bytes = expected_samples * bytes_per_sample * config.audio.channels
+
+        import time
+
+        time.sleep(duration)
+
+        data_bytes = proc.stdout.read(total_bytes)
+        proc.terminate()
+        proc.wait(timeout=2)
+
+        if len(data_bytes) == 0:
+            stderr = proc.stderr.read().decode()
+            raise RuntimeError(f"{cmd_base} failed/empty: {stderr}")
+
+        audio = np.frombuffer(data_bytes, dtype=np.int16)
+        audio = audio.astype(np.float32) / np.iinfo(np.int16).max
+        if config.audio.channels > 1:
+            audio = audio.reshape(-1, config.audio.channels)
+        if len(audio) > expected_samples:
+            audio = audio[:expected_samples]
+        return audio
+    except FileNotFoundError:
+        print(f"❌ '{cmd_base}' not found. Please install pulseaudio-utils.")
+        raise
+
+
 def record_with_arecord(config: BBWatchConfig, duration: float, device: str):
     """Record using arecord subprocess (fallback for when PortAudio misses devices)."""
     import subprocess
@@ -52,7 +163,7 @@ def record_with_arecord(config: BBWatchConfig, duration: float, device: str):
         "-D",
         device,
         "-f",
-        "S32_LE",
+        "S16_LE",  # 16-bit signed little-endian (widely supported)
         "-r",
         str(config.audio.sample_rate),
         "-c",
@@ -65,7 +176,7 @@ def record_with_arecord(config: BBWatchConfig, duration: float, device: str):
     print(f"🎤 Recording with arecord: {' '.join(cmd)}")
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        bytes_per_sample = 4
+        bytes_per_sample = 2  # S16_LE = 2 bytes
         expected_samples = int(duration * config.audio.sample_rate)
         total_bytes = expected_samples * bytes_per_sample * config.audio.channels
         data_bytes = proc.stdout.read(total_bytes)
@@ -73,8 +184,8 @@ def record_with_arecord(config: BBWatchConfig, duration: float, device: str):
         if len(data_bytes) == 0:
             stderr = proc.stderr.read().decode()
             raise RuntimeError(f"arecord failed/empty: {stderr}")
-        audio = np.frombuffer(data_bytes, dtype=np.int32)
-        audio = audio.astype(np.float32) / np.iinfo(np.int32).max
+        audio = np.frombuffer(data_bytes, dtype=np.int16)
+        audio = audio.astype(np.float32) / np.iinfo(np.int16).max
         if config.audio.channels > 1:
             audio = audio.reshape(-1, config.audio.channels)
         if len(audio) > expected_samples:
@@ -95,12 +206,8 @@ def record_and_detect(config: BBWatchConfig, duration: float = 3.0) -> bool:
     Returns:
         True if cry was detected.
     """
-    try:
-        import sounddevice as sd
-        import soundfile as sf
-    except ImportError:
-        print("❌ sounddevice not installed. Run: pip install sounddevice")
-        sys.exit(1)
+    # Import soundfile for WAV writing (always needed)
+    import soundfile as sf
 
     print("=" * 60)
     print("🎤 BBWatch Audio Detection Demo")
@@ -110,7 +217,9 @@ def record_and_detect(config: BBWatchConfig, duration: float = 3.0) -> bool:
     print(f"RMS Threshold: {config.detection.rms_threshold}")
     print()
 
-    # Show available audio devices (SoundDevice / PortAudio)
+    # Show available audio devices (SoundDevice / PortAudio) only if available
+    import sounddevice as sd
+
     print("Available audio devices (PortAudio indices):")
     try:
         print(sd.query_devices())
@@ -130,37 +239,87 @@ def record_and_detect(config: BBWatchConfig, duration: float = 3.0) -> bool:
 
     # Record
     print(f"🔴 Recording for {duration}s... (make some noise!)")
-    try:
-        device = config.audio.device_index
-        if device is not None:
-            print(f"🎤 Using configured device: {device}")
 
-        audio = sd.rec(
-            int(duration * config.audio.sample_rate),
-            samplerate=config.audio.sample_rate,
-            channels=config.audio.channels,
-            dtype="float32",
-            device=device,
-        )
-        sd.wait()
-    except Exception as e:
-        print(f"❌ Recording failed: {e}")
+    device = config.audio.device_index
+    audio = None
+
+    # Determine if device is an ALSA string (needs arecord) or PortAudio index
+    # ALSA strings start with "hw:" or "plughw:"
+    is_alsa_device = (
+        device is not None and isinstance(device, str) and (device.startswith("hw:") or device.startswith("plughw:"))
+    )
+
+    if is_alsa_device:
+        # Prefer plughw: for automatic format conversion
+        arecord_device = device if device.startswith("plughw:") else device.replace("hw:", "plughw:")
+        print(f"🎤 Using ALSA device via arecord: {arecord_device}")
         try:
-            print("\nDevice capabilities:")
-            print(sd.query_devices())
-        except Exception:
-            pass
-        return False
+            audio = record_with_arecord(config, duration, arecord_device)
+        except Exception as e:
+            error_msg = str(e)
+            # If device is busy, likely PulseAudio is holding it - try PulseAudio instead
+            if "Device or resource busy" in error_msg or "busy" in error_msg.lower():
+                print(f"⚠️  Device busy (likely PulseAudio). Trying PulseAudio interface...")
+                try:
+                    audio = record_with_pulseaudio(config, duration, arecord_device)
+                except Exception as pa_error:
+                    print(f"❌ PulseAudio also failed: {pa_error}")
+                    print("\n💡 Tip: Close apps using the webcam, or run: pulseaudio -k")
+                    return False
+            else:
+                print(f"❌ arecord failed: {e}")
+                return False
+    else:
+        # PortAudio path
+        try:
+            import sounddevice as sd
+        except ImportError:
+            print("❌ PortAudio not available and device is not an ALSA string")
+            print("   Install sounddevice: pip install sounddevice")
+            return False
+
+        try:
+            if device is not None:
+                print(f"🎤 Using PortAudio device index: {device}")
+            else:
+                print("🎤 Using default PortAudio device")
+
+            audio = sd.rec(
+                int(duration * config.audio.sample_rate),
+                samplerate=config.audio.sample_rate,
+                channels=config.audio.channels,
+                dtype="float32",
+                device=int(device) if device is not None else None,
+            )
+            sd.wait()
+        except Exception as e:
+            print(f"❌ Recording failed: {e}")
+            try:
+                print("\nDevice capabilities:")
+                print(sd.query_devices())
+            except Exception:
+                pass
+            return False
 
     print("✅ Recording complete!\n")
+
+    # Debug: show raw audio stats
+    import numpy as np
+
+    raw_rms = np.sqrt(np.mean(audio**2))
+    raw_max = np.max(np.abs(audio))
+    print(f"📈 Raw audio stats: RMS={raw_rms:.6f}, Max={raw_max:.6f}")
+    if raw_rms < 0.001:
+        print("⚠️  Warning: Very low audio levels detected!")
+    print()
 
     # Save temporarily
     tmp_path = Path("/tmp/bbwatch_demo.wav")
     sf.write(tmp_path, audio, config.audio.sample_rate)
 
-    # Check if empty
-    if is_segment_empty(tmp_path):
-        print("📊 Result: SILENCE (no audio detected)")
+    # Check if empty (use config threshold)
+    if is_segment_empty(tmp_path, config.detection.silence_threshold):
+        print(f"📊 Result: SILENCE (RMS < {config.detection.silence_threshold})")
         return False
 
     # Run detection

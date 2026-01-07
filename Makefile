@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test lint format clean docker-build docker-test docker-demo docker-shell docker-build-rpi devices
+.PHONY: help install install-dev test lint format clean docker-build docker-test docker-demo docker-demo-video docker-demo-motion docker-shell docker-build-rpi devices
 
 # Default target
 help:
@@ -16,7 +16,8 @@ help:
 	@echo "  make docker-build      Build development image"
 	@echo "  make docker-test       Run tests in Docker"
 	@echo "  make docker-demo       Run audio demo with mic passthrough"
-	@echo "  make docker-demo-video Run video demo with webcam (requires X11)"
+	@echo "  make docker-demo-video  Run video demo with webcam (requires X11)"
+	@echo "  make docker-demo-motion Run motion detection demo (requires X11)"
 	@echo "  make docker-shell      Interactive shell in container"
 	@echo "  make docker-build-rpi  Cross-compile ARM64 image for Raspberry Pi"
 	@echo ""
@@ -81,6 +82,10 @@ docker-demo: docker-build
 		--device /dev/bus/usb:/dev/bus/usb \
 		--group-add audio \
 		-e PA_ALSA_PLUGHW=1 \
+		-e PULSE_SERVER=unix:/run/user/$(shell id -u)/pulse/native \
+		-e PULSE_COOKIE=/tmp/pulse-cookie \
+		-v /run/user/$(shell id -u)/pulse:/run/user/$(shell id -u)/pulse:ro \
+		-v $(HOME)/.config/pulse/cookie:/tmp/pulse-cookie:ro \
 		-v $(PWD):/app \
 		$(DOCKER_IMAGE):$(DOCKER_TAG) \
 		python3 scripts/demo.py --loop
@@ -101,6 +106,20 @@ docker-demo-video: docker-build
 		-v $(PWD):/app \
 		$(DOCKER_IMAGE):$(DOCKER_TAG) \
 		python3 scripts/demo_video.py
+
+docker-demo-motion: docker-build
+	@echo "Starting motion detection demo with webcam passthrough..."
+	@echo "Requires X11 forwarding: export DISPLAY and mount /tmp/.X11-unix"
+	docker run --rm -it \
+		--privileged \
+		--device /dev/video0:/dev/video0 \
+		--device /dev/bus/usb:/dev/bus/usb \
+		--group-add video \
+		-e DISPLAY=$(DISPLAY) \
+		-v /tmp/.X11-unix:/tmp/.X11-unix \
+		-v $(PWD):/app \
+		$(DOCKER_IMAGE):$(DOCKER_TAG) \
+		python3 scripts/demo_motion.py
 
 docker-shell: docker-build
 	docker run --rm -it \
