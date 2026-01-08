@@ -71,47 +71,103 @@ class TestCryDetection:
 
     def test_silence_not_detected_as_cry(self, silence_wav):
         """Silent audio should never trigger an alert."""
-        result = detect_cry(silence_wav)
+        result = detect_cry(
+            silence_wav,
+            lowcut=250.0,
+            highcut=800.0,
+            rms_threshold=0.02,
+            min_active_ratio=0.3,
+            window_ms=100.0,
+        )
         assert result.is_cry is False
         assert result.filtered_rms < 0.001
         assert result.active_ratio < 0.1
 
     def test_baby_cry_detected(self, baby_cry_wav):
         """Baby cry audio should trigger an alert."""
-        result = detect_cry(baby_cry_wav)
+        result = detect_cry(
+            baby_cry_wav,
+            lowcut=250.0,
+            highcut=800.0,
+            rms_threshold=0.02,
+            min_active_ratio=0.3,
+            window_ms=100.0,
+        )
         assert result.is_cry is True
         assert result.active_ratio > 0.3
 
     def test_adult_speech_not_detected(self, adult_speech_wav):
         """Adult speech should NOT trigger (different frequency profile)."""
-        result = detect_cry(adult_speech_wav, lowcut=250, highcut=800)
+        result = detect_cry(
+            adult_speech_wav,
+            lowcut=250.0,
+            highcut=800.0,
+            rms_threshold=0.02,
+            min_active_ratio=0.3,
+            window_ms=100.0,
+        )
         # Adult fundamental is 85-180 Hz, should have reduced energy in cry band
         assert result.is_cry is False or result.active_ratio < 0.5
 
     def test_white_noise_limited_detection(self, white_noise_wav):
         """Broadband noise should not reliably trigger."""
-        result = detect_cry(white_noise_wav)
+        result = detect_cry(
+            white_noise_wav,
+            lowcut=250.0,
+            highcut=800.0,
+            rms_threshold=0.02,
+            min_active_ratio=0.3,
+            window_ms=100.0,
+        )
         # White noise has distributed energy, ratio should be reduced
         assert result.active_ratio < 0.7
 
     def test_file_not_found_raises_error(self, tmp_path):
         """Missing file should raise FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
-            detect_cry(tmp_path / "nonexistent.wav")
+            detect_cry(
+                tmp_path / "nonexistent.wav",
+                lowcut=250.0,
+                highcut=800.0,
+                rms_threshold=0.02,
+                min_active_ratio=0.3,
+                window_ms=100.0,
+            )
 
     def test_duration_returned_correctly(self, baby_cry_wav):
         """Duration should match the actual file duration."""
-        result = detect_cry(baby_cry_wav)
+        result = detect_cry(
+            baby_cry_wav,
+            lowcut=250.0,
+            highcut=800.0,
+            rms_threshold=0.02,
+            min_active_ratio=0.3,
+            window_ms=100.0,
+        )
         assert abs(result.duration_s - 3.0) < 0.1
 
     def test_custom_thresholds(self, baby_cry_wav):
         """Custom thresholds should affect detection."""
         # Very high threshold should prevent detection
-        result = detect_cry(baby_cry_wav, rms_threshold=1.0)
+        result = detect_cry(
+            baby_cry_wav,
+            lowcut=250.0,
+            highcut=800.0,
+            rms_threshold=1.0,
+            min_active_ratio=0.3,
+            window_ms=100.0,
+        )
         assert result.is_cry is False
 
         # Very low threshold should always detect
-        result = detect_cry(baby_cry_wav, rms_threshold=0.0001, min_active_ratio=0.01)
+        result = detect_cry(
+            baby_cry_wav,
+            lowcut=250.0,
+            highcut=800.0,
+            rms_threshold=0.0001,
+            min_active_ratio=0.01,
+            window_ms=100.0,
+        )
         assert result.is_cry is True
 
 

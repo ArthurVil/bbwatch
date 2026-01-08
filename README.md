@@ -26,12 +26,31 @@ cd bbwatch
 
 # Run tests
 make docker-test
+```
 
-# Run audio demo (records from mic)
+### Full Stack Demo (Local)
+
+Run the complete system (Audio + Video + Overlays) on your PC using Docker Compose (requires webcam):
+
+```bash
+cd docker
+docker-compose up
+```
+
+- **Video Stream**: Open http://localhost:1984
+- **Logs**: Watch terminal for "Cry detected" alerts
+
+### Component Demos (Docker)
+
+Isolate specific components for testing:
+
+```bash
+# Run audio demo only (records from mic)
 make docker-demo
 
-# Run video demo (requires webcam + X11)
+# Run video demo (requires webcam + X11 forwarding)
 make docker-demo-video
+```
 ```
 
 ### Development (Local)

@@ -54,12 +54,9 @@ def detect_audio_devices() -> list[AudioDevice]:
             timeout=5,
             check=True,
         )
-    except FileNotFoundError as e:
-        raise RuntimeError("arecord not found - install alsa-utils") from e
-    except subprocess.TimeoutExpired as e:
-        raise RuntimeError("arecord timed out") from e
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"arecord failed: {e}") from e
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+        LOGGER.warning(f"Audio device detection failed: {e}")
+        return []
 
     devices = []
 
@@ -91,12 +88,9 @@ def detect_video_devices() -> list[VideoDevice]:
             timeout=5,
             check=True,
         )
-    except FileNotFoundError as e:
-        raise RuntimeError("v4l2-ctl not found - install v4l-utils") from e
-    except subprocess.TimeoutExpired as e:
-        raise RuntimeError("v4l2-ctl timed out") from e
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"v4l2-ctl failed: {e}") from e
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+        LOGGER.warning(f"Video device detection failed: {e}")
+        return []
 
     devices = []
     current_name = "Unknown"

@@ -131,6 +131,29 @@ class BBWatchConfig(BaseSettings):
             with open(path) as f:
                 data = yaml.safe_load(f) or {}
 
+            # Prune keys from YAML that are overridden by environment variables
+            # Pydantic BaseSettings prioritizes init args (YAML) over Env vars.
+            # By removing them from init args, we force fallback to Env vars.
+            import os
+
+            def _prune(d: dict, prefix: str) -> None:
+                keys_to_remove = []
+                for k, v in d.items():
+                    env_key = f"{prefix}{k.upper()}"
+                    if isinstance(v, dict):
+                        _prune(v, f"{env_key}__")
+                        if not v:  # Empty dict after pruning
+                            keys_to_remove.append(k)
+                    else:
+                        if env_key in os.environ:
+                            LOGGER.debug(f"Environment override detected for {env_key}")
+                            keys_to_remove.append(k)
+
+                for k in keys_to_remove:
+                    del d[k]
+
+            _prune(data, "BBWATCH_")
+
             LOGGER.info(f"Loaded configuration from {path}")
             return cls(**data)
 

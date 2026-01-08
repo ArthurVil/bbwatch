@@ -6,12 +6,12 @@ streams:
   babycam:
     - "exec:ffmpeg -hide_banner -v error \
       -f v4l2 -i /dev/video0 \
-      -f alsa -i hw:1,0 \  # Update '1' to your device card index (arecord -l)
-      -loop 1 -i /app/overlays/current.png \
+      -f pulse -channels 1 -i alsa_input.usb-Sunplus_IT_Co_WEBCAM_ESSENTIELB_W1_AN20200706002-02.mono-fallback \
+      -f rawvideo -pixel_format rgba -video_size 640x480 -framerate 1 -i /app/data/overlays/overlay.pipe \
       -filter_complex '[0:v][2:v]overlay=0:0' \
       -c:v libx264 -preset ultrafast -tune zerolatency \
       -c:a aac -b:a 128k \
-      -f rtsp rtsp://localhost:8554/babycam"
+      -f rtsp {output}"
 
 api:
   listen: ":1984"

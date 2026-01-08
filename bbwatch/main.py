@@ -87,6 +87,14 @@ class BabyMonitor:
             LOGGER.info("Using fake hardware (development mode)")
             self._audio_device = "hw:0,0"
             self._video_device = "/dev/video0"
+            self._video_device = "/dev/video0"
+            return True
+
+        # Check for network stream (RTSP/HTTP)
+        if "://" in self.config.audio.device_index:
+            LOGGER.info(f"Using network stream: {self.config.audio.device_index}")
+            self._audio_device = self.config.audio.device_index
+            # Network mode doesn't need local video device
             return True
 
         audio_devices, video_devices = log_detected_hardware()
@@ -137,6 +145,7 @@ class BabyMonitor:
             health_timeout_s=self.config.alerts.health_timeout_s,
         )
         self._overlay.setup()
+        self._overlay.update()  # Create initial overlay to unblock go2rtc
 
         # Start file watcher for detection
         handler = SegmentHandler(

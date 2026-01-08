@@ -65,11 +65,8 @@ class AudioCapture:
             "-hide_banner",
             "-loglevel",
             "warning",
-            # Input: ALSA device
-            "-f",
-            "alsa",
-            "-i",
-            self.device,
+            # Input: ALSA device or Network Stream
+            *(["-i", self.device] if "://" in self.device else ["-f", "alsa", "-i", self.device]),
             # Audio settings
             "-ac",
             str(self.channels),

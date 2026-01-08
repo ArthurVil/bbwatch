@@ -224,7 +224,7 @@ class SegmentHandler(FileSystemEventHandler):
             return
 
         # Wait briefly for file write
-        time.sleep(0.3)
+        time.sleep(0.5)
 
         wav_path = Path(src_path)
 
@@ -233,6 +233,9 @@ class SegmentHandler(FileSystemEventHandler):
 
         # Check if empty (delete if configured)
         if is_segment_empty(wav_path, self.config.silence_threshold):
+            # Update heartbeat with 0 intensity (silence)
+            self.alert_manager.process_intensity(0.0)
+
             if self.delete_empty:
                 try:
                     wav_path.unlink()

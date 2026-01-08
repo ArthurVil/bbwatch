@@ -162,8 +162,8 @@ def update_current_overlay(overlay_dir: Path, status_file: Path, health_timeout_
     state = get_alert_state(status_file, health_timeout_s)
 
     # Map state to overlay file
-    overlay_file = overlay_dir / f"{state}.rgba"
-    current_link = overlay_dir / "current.rgba"
+    overlay_file = overlay_dir / f"{state}.ppm"
+    current_link = overlay_dir / "current.ppm"
 
     if not overlay_file.exists():
         LOGGER.error(f"Overlay file not found: {overlay_file}")
@@ -180,6 +180,19 @@ def update_current_overlay(overlay_dir: Path, status_file: Path, health_timeout_
 
     except OSError as e:
         LOGGER.error(f"Failed to update overlay symlink: {e}")
+
+    # Also update RGBA link for backward compatibility or raw usage
+    try:
+        rgba_file = overlay_dir / f"{state}.rgba"
+        rgba_link = overlay_dir / "current.rgba"
+        rgba_temp = overlay_dir / "current_rgba.tmp"
+        if rgba_file.exists():
+            if rgba_temp.exists():
+                rgba_temp.unlink()
+            rgba_temp.symlink_to(rgba_file.name)
+            rgba_temp.rename(rgba_link)
+    except OSError:
+        pass  # Non-critical
 
     return state
 
