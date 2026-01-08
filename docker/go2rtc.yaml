@@ -5,9 +5,9 @@ streams:
   # Overlays image from /app/overlays/current.png
   babycam:
     - "exec:ffmpeg -hide_banner -v error \
-      -f v4l2 -i /dev/video0 \
+      -f v4l2 -video_size 640x480 -i /dev/video0 \
       -f pulse -channels 1 -i alsa_input.usb-Sunplus_IT_Co_WEBCAM_ESSENTIELB_W1_AN20200706002-02.mono-fallback \
-      -f rawvideo -pixel_format rgba -video_size 640x480 -framerate 1 -i /app/data/overlays/overlay.pipe \
+      -f rawvideo -pixel_format rgba -video_size 640x480 -framerate 5 -i /app/data/overlays/overlay.pipe \
       -filter_complex '[0:v][2:v]overlay=0:0' \
       -c:v libx264 -preset ultrafast -tune zerolatency \
       -c:a aac -b:a 128k \

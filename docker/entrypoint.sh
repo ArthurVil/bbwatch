@@ -24,7 +24,6 @@ chmod 666 "$PIPE_PATH"
             # Avoid tight loop if file missing, but don't crash the pipe
             sleep 0.1
         fi
-        sleep 1
     done
 ) > "$PIPE_PATH" &
 

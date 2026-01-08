@@ -5,7 +5,6 @@ that uses DSP techniques rather than ML for the PoC phase.
 """
 
 import logging
-import time
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -211,8 +210,8 @@ class SegmentHandler(FileSystemEventHandler):
         self.alert_manager = alert_manager
         self.delete_empty = delete_empty
 
-    def on_created(self, event: "FileSystemEvent") -> None:
-        """Handle new file creation events."""
+    def on_closed(self, event: "FileSystemEvent") -> None:
+        """Handle file close events (finished writing)."""
         if event.is_directory:
             return
 
@@ -222,9 +221,6 @@ class SegmentHandler(FileSystemEventHandler):
 
         if not src_path.endswith(".wav"):
             return
-
-        # Wait briefly for file write
-        time.sleep(0.5)
 
         wav_path = Path(src_path)
 
