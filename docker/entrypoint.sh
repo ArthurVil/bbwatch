@@ -16,16 +16,16 @@ chmod 666 "$PIPE_PATH"
 # Background loop to feed the pipe - start immediately
 # Redirecting to pipe OUTSIDE the loop keeps the file descriptor open
 # preventing EOFs from killing the FFmpeg input stream.
-(
-    while true; do
-        if [ -e /app/data/overlays/current.rgba ]; then
-            cat /app/data/overlays/current.rgba
-        else
-            # Avoid tight loop if file missing, but don't crash the pipe
-            sleep 0.1
-        fi
-    done
-) > "$PIPE_PATH" &
+# (
+#     while true; do
+#         if [ -e /app/data/overlays/current.rgba ]; then
+#             cat /app/data/overlays/current.rgba
+#         else
+#             # Avoid tight loop if file missing, but don't crash the pipe
+#             sleep 0.1
+#         fi
+#     done
+# ) > "$PIPE_PATH" &
 
 # Create initial healthy status to prevent Blue Screen on startup
 echo "Initializing status..."

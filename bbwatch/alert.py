@@ -47,6 +47,17 @@ class AlertManager:
         self._state = AlertState.IDLE
         self._last_trigger_time = 0.0
         self._cooldown_start_time = 0.0
+        self._current_intensity = 0.0
+
+    @property
+    def current_intensity(self) -> float:
+        """Get the most recent audio intensity."""
+        return self._current_intensity
+
+    @property
+    def alert_active(self) -> bool:
+        """Check if alert is currently triggered."""
+        return self._state == AlertState.TRIGGERED
 
     @property
     def current_state(self) -> AlertState:
@@ -67,6 +78,7 @@ class AlertManager:
             Current status object.
         """
         now = time.time()
+        self._current_intensity = intensity
 
         if self._state == AlertState.IDLE:
             if intensity > self.config.trigger_high:

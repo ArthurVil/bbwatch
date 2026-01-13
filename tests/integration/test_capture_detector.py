@@ -39,7 +39,7 @@ class TestCaptureDetectorIntegration:
         event.src_path = str(test_wav)
         event.is_directory = False
 
-        handler.on_created(event)
+        handler.on_closed(event)
 
         # Status file should be updated
         assert status_file.exists()
@@ -64,7 +64,7 @@ class TestCaptureDetectorIntegration:
         event.src_path = str(test_wav)
         event.is_directory = False
 
-        handler.on_created(event)
+        handler.on_closed(event)
 
         # File should be deleted
         assert not test_wav.exists()
@@ -84,7 +84,7 @@ class TestCaptureDetectorIntegration:
         event.src_path = str(test_wav)
         event.is_directory = False
 
-        handler.on_created(event)
+        handler.on_closed(event)
 
         # File should still exist
         assert test_wav.exists()
@@ -111,7 +111,7 @@ class TestCaptureDetectorIntegration:
         test_wav1 = tmp_path / "segment_001.wav"
         shutil.copy(baby_cry_wav, test_wav1)
         event1 = Mock(src_path=str(test_wav1), is_directory=False)
-        handler.on_created(event1)
+        handler.on_closed(event1)
 
         status1 = json.loads(status_file.read_text())
         # RMS of baby cry fixture is ~0.3 (amplitude 0.8 * sine)
@@ -134,7 +134,7 @@ class TestCaptureDetectorIntegration:
         event.src_path = str(txt_file)
         event.is_directory = False
 
-        handler.on_created(event)
+        handler.on_closed(event)
 
         # Status file should not be created
         assert not status_file.exists()
@@ -154,6 +154,6 @@ class TestCaptureDetectorIntegration:
         event.src_path = str(subdir)
         event.is_directory = True
 
-        handler.on_created(event)
+        handler.on_closed(event)
 
         assert not status_file.exists()

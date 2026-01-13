@@ -20,7 +20,9 @@ from bbwatch.hardware import (
     get_preferred_video_device,
     log_detected_hardware,
 )
+from bbwatch.motion import MotionDetector
 from bbwatch.overlay import OverlayController
+from bbwatch.overlay_generator import OverlayGenerator
 from bbwatch.storage import StorageManager
 
 LOGGER = logging.getLogger(__name__)
@@ -69,7 +71,9 @@ class BabyMonitor:
         self._capture: SlidingWindowCapture | None = None
         self._storage: StorageManager | None = None
         self._observer: BaseObserver | None = None
-        self._overlay: OverlayController | None = None
+        self._overlay_controller: OverlayController | None = None
+        self._overlay_generator: OverlayGenerator | None = None
+        self._motion_detector: MotionDetector | None = None
         self._alert_manager: AlertManager | None = None
         self._running = False
 
@@ -87,22 +91,26 @@ class BabyMonitor:
             LOGGER.info("Using fake hardware (development mode)")
             self._audio_device = "hw:0,0"
             self._video_device = "/dev/video0"
-            self._video_device = "/dev/video0"
             return True
 
         # Check for network stream (RTSP/HTTP)
-        if "://" in self.config.audio.device_index:
-            LOGGER.info(f"Using network stream: {self.config.audio.device_index}")
+        network_audio = "://" in self.config.audio.device_index
+        if network_audio:
+            LOGGER.info(f"Using network audio stream: {self.config.audio.device_index}")
             self._audio_device = self.config.audio.device_index
-            # Network mode doesn't need local video device
+            # Use raw_video for motion detection to avoid seeing the overlay
+            # We skip local hardware discovery to avoid v4l2-ctl errors when go2rtc holds the device
+            self._video_device = self.config.audio.device_index.replace("babycam", "raw_video")
+            LOGGER.info(f"Using network video for motion: {self._video_device}")
             return True
+
+        # Local hardware mode
+        from bbwatch.hardware import get_preferred_audio_device, get_preferred_video_device, log_detected_hardware
 
         audio_devices, video_devices = log_detected_hardware()
 
-        # Get preferred devices
+        # Get preferred audio device
         audio = get_preferred_audio_device(audio_devices)
-        video = get_preferred_video_device(video_devices)
-
         if audio is None:
             LOGGER.error("No audio capture device found!")
             return False
@@ -110,11 +118,13 @@ class BabyMonitor:
         self._audio_device = audio.alsa_id
         LOGGER.info(f"Using audio device: {audio}")
 
+        # Get preferred video device
+        video = get_preferred_video_device(video_devices)
         if video is None:
-            LOGGER.warning("No video device found - video streaming will not work")
+            LOGGER.warning("No local video device found - motion detection will be disabled")
         else:
             self._video_device = video.path
-            LOGGER.info(f"Using video device: {video}")
+            LOGGER.info(f"Using video device for motion: {video}")
 
         return True
 
@@ -138,20 +148,40 @@ class BabyMonitor:
         # Setup alert manager
         self._alert_manager = AlertManager(self.config.alerts)
 
-        # Setup overlay controller
-        self._overlay = OverlayController(
+        # Legacy Overlay Controller (for static images if dynamic disabled, or just setup)
+        # Keeps compatibility with status file updates
+        self._overlay_controller = OverlayController(
             overlay_dir=self.config.alerts.overlay_dir,
             status_file=self.config.alerts.status_file,
             health_timeout_s=self.config.alerts.health_timeout_s,
         )
-        self._overlay.setup()
-        self._overlay.update()  # Create initial overlay to unblock go2rtc
+        self._overlay_controller.setup()
+
+        # New Dynamic Components
+        if self._video_device:
+            # Motion Detector
+            LOGGER.info(f"Initializing motion detector on {self._video_device}")
+            self._motion_detector = MotionDetector(device_index=self._video_device)
+
+        # Overlay Generator
+        overlay_pipe = self.config.data_dir / "overlays/overlay.pipe"
+        if self.config.alerts.enable_dynamic_overlay:
+            LOGGER.info(f"Initializing dynamic overlay generator (pipe={overlay_pipe})")
+            self._overlay_generator = OverlayGenerator(pipe_path=overlay_pipe, fps=self.config.alerts.overlay_fps)
+            self._overlay_generator.start()
+        else:
+            LOGGER.info("Dynamic overlay disabled by config")
+
+        # Start motion detector if video device available
+        if self._motion_detector:
+            self._motion_detector.start()
 
         # Start file watcher for detection
         handler = SegmentHandler(
             config=self.config.detection,
             alert_manager=self._alert_manager,
             delete_empty=self.config.storage.delete_empty_segments,
+            overlay_generator=self._overlay_generator,
         )
 
         self._observer = Observer()
@@ -182,6 +212,16 @@ class BabyMonitor:
     def stop(self) -> None:
         """Stop all monitor components gracefully."""
         LOGGER.info("Stopping baby monitor...")
+
+        if self._overlay_generator:
+            LOGGER.info("Stopping overlay generator...")
+            self._overlay_generator.stop()
+            self._overlay_generator = None
+
+        if self._motion_detector:
+            LOGGER.info("Stopping motion detector...")
+            self._motion_detector.stop()
+            self._motion_detector = None
 
         if self._capture is not None:
             try:
@@ -214,16 +254,40 @@ class BabyMonitor:
             self.start()
 
             while self._running:
-                # Update overlay based on current status
-                if self._overlay is not None:
-                    self._overlay.update()
+                # Update legacy overlay logic (file linking)
+                if self._overlay_controller is not None:
+                    self._overlay_controller.update()
+
+                # --- Update Dynamic Data ---
+                if self._overlay_generator and self._running:
+                    # Get motion level
+                    motion_level = 0.0
+                    motion_detected = False
+                    if self._motion_detector:
+                        motion_level = self._motion_detector.get_current_motion()
+                        motion_detected = motion_level > 1.0  # 1% threshold
+
+                    # Get audio level and alert status
+                    audio_level = 0.0
+                    audio_alert = False
+                    if self._alert_manager:
+                        audio_level = self._alert_manager.current_intensity
+                        audio_alert = self._alert_manager.alert_active
+
+                    # Update overlay
+                    self._overlay_generator.update_state(
+                        motion_detected=motion_detected,
+                        audio_alert=audio_alert,
+                        motion_level=motion_level,
+                        audio_level=audio_level,
+                    )
 
                 # Log periodic status
                 if self._storage is not None:
                     current, max_size = self._storage.get_usage()
-                    LOGGER.debug(f"Storage: {current:.1f}/{max_size:.1f} MB ({current / max_size * 100:.1f}%)")
+                    # LOGGER.debug(f"Storage: {current:.1f}/{max_size:.1f} MB ({current / max_size * 100:.1f}%)")
 
-                time.sleep(self._overlay.poll_interval_s if self._overlay else 1.0)
+                time.sleep(1.0)  # Main loop slow tick
 
         except KeyboardInterrupt:
             LOGGER.info("Received interrupt signal")

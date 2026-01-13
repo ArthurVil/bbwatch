@@ -33,6 +33,7 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "sounddevice",
     "opencv-python",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]

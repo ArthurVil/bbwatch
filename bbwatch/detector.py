@@ -15,6 +15,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
 from bbwatch.alert import AlertManager
 from bbwatch.config import DetectionConfig
+from bbwatch.overlay_generator import OverlayGenerator
 
 LOGGER = logging.getLogger(__name__)
 
@@ -197,6 +198,7 @@ class SegmentHandler(FileSystemEventHandler):
         config: DetectionConfig,
         alert_manager: AlertManager,
         delete_empty: bool = True,
+        overlay_generator: OverlayGenerator | None = None,
     ) -> None:
         """Initialize the segment handler.
 
@@ -204,11 +206,13 @@ class SegmentHandler(FileSystemEventHandler):
             config: Detection configuration.
             alert_manager: Manager to handle alert state and effects.
             delete_empty: Whether to delete empty segments.
+            overlay_generator: Generator to visualize audio levels.
         """
         super().__init__()
         self.config = config
         self.alert_manager = alert_manager
         self.delete_empty = delete_empty
+        self.overlay_generator = overlay_generator
 
     def on_closed(self, event: "FileSystemEvent") -> None:
         """Handle file close events (finished writing)."""
@@ -257,3 +261,12 @@ class SegmentHandler(FileSystemEventHandler):
         # Process alert state (hysteresis based on intensity)
         # Using filtered_rms as the intensity metric for hysteresis
         self.alert_manager.process_intensity(result.filtered_rms)
+
+        # Update overlay generator if present
+        if self.overlay_generator:
+            self.overlay_generator.update_state(
+                motion_detected=False,  # We don't know motion here
+                audio_alert=self.alert_manager.alert_active,
+                motion_level=0.0,  # Handled by main loop
+                audio_level=result.filtered_rms,
+            )

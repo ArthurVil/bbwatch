@@ -37,8 +37,14 @@ cd docker
 docker-compose up
 ```
 
-- **Video Stream**: Open http://localhost:1984
-- **Logs**: Watch terminal for "Cry detected" alerts
+- **Web Interface**: Open http://localhost:1984
+- **VLC / Media Player**: Open network stream `rtsp://localhost:8554/babycam`
+- **Logs**: Watch terminal for "Cry detected" and "Motion detected" alerts
+- **Overlay Guide**: 
+  - 🟨 **Yellow**: Motion detected
+  - 🟪 **Purple**: Cry detected (Alert active)
+  - 🟥 **Red**: Both motion and cry detected
+  - 🟦 **Blue**: System error (Overlay data stale)
 
 ### Component Demos (Docker)
 
