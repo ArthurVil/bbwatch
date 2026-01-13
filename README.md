@@ -4,6 +4,9 @@
 
 A fully open-source baby monitor built for Raspberry Pi with USB webcam. Features real-time cry detection using DSP (no cloud, no ML required), visual overlay alerts, and automatic disk management.
 
+> [!CAUTION]
+> **SAFETY DISCLAIMER**: BBWatch is a hobby project software and is **NOT** a certified medical device or a reliable safety device. It relies on complex software, network conditions, and consumer hardware which can fail at any time. **NEVER** rely solely on this software for the safety of your child. Always maintain direct supervision or use certified baby monitoring appliances as your primary safety tool.
+
 ## Features
 
 - 🎥 **Live video streaming** via WebRTC/RTSP (go2rtc)
@@ -116,6 +119,22 @@ alerts:
 storage:
   max_size_mb: 1024.0        # Max disk usage for recordings
 ```
+
+### Latency Tuning & Performance
+
+To achieve low-latency streaming (<1s delay):
+
+1. **Overlay FPS**: In `config.yaml`, set `alerts.overlay_fps` to a value that matches your `docker/go2rtc.yaml` configuration.
+   > [!IMPORTANT]
+   > `go2rtc.yaml` has a hardcoded `-framerate 5` for the overlay pipe input. If you change `overlay_fps` in `config.yaml`, you MUST manually update `docker/go2rtc.yaml` to match, or the stream may drift/lag.
+
+2. **Buffer Sizes**:
+   - `motion.history_len`: Lower values (e.g., 5-20) reduce plotting history but improve perceived responsiveness of the graph.
+   - `motion.fps`: Higher values (e.g., 10-30) give smoother data but consume more CPU.
+
+3. **Motion Thresholds**:
+   - `motion.threshold`: 10-20 is good for sensitive detection.
+   - `motion.blur_size`: 5-9 reduces noise.
 
 ## Architecture
 

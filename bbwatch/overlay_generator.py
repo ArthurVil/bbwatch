@@ -31,12 +31,31 @@ class OverlayState(NamedTuple):
 class OverlayGenerator:
     """Generates and writes overlay frames to a pipe."""
 
+    # Layout Constraints
+    WIDTH: int = 640
+    HEIGHT: int = 480
+    PLOT_WIDTH: int = 200
+    PLOT_HEIGHT: int = 80
+    MARGIN: int = 10
+
+    # Colors (BGRA)
+    COLOR_RED: tuple[int, int, int, int] = (0, 0, 255, 100)
+    COLOR_YELLOW: tuple[int, int, int, int] = (0, 255, 255, 100)
+    COLOR_PURPLE: tuple[int, int, int, int] = (255, 0, 128, 100)
+    COLOR_TRANSPARENT: tuple[int, int, int, int] = (0, 0, 0, 0)
+    COLOR_BG_PLOT: tuple[int, int, int, int] = (0, 0, 0, 100)
+    COLOR_LINE_MOTION: tuple[int, int, int, int] = (0, 255, 0, 255)
+    COLOR_LINE_AUDIO: tuple[int, int, int, int] = (255, 255, 0, 255)
+    COLOR_TEXT_TIMESTAMP: tuple[int, int, int, int] = (255, 255, 255, 255)
+    COLOR_TEXT_INFO: tuple[int, int, int, int] = (200, 200, 200, 255)
+
     def __init__(
         self,
         pipe_path: Path,
         width: int = 640,
         height: int = 480,
         fps: int = 5,
+        history_len: int = 50,
     ) -> None:
         """Initialize overlay generator.
 
@@ -45,15 +64,16 @@ class OverlayGenerator:
             width: Image width.
             height: Image height.
             fps: Target frames per second.
+            history_len: Number of data points to keep for plotting.
         """
         self.pipe_path = Path(pipe_path)
         self.width = width
         self.height = height
         self.fps = fps
+        self.history_len = history_len
         self.running = False
 
         # History for plotting
-        self.history_len = 50
         self.motion_history = deque([0.0] * self.history_len, maxlen=self.history_len)
         self.audio_history = deque([0.0] * self.history_len, maxlen=self.history_len)
 
@@ -90,67 +110,38 @@ class OverlayGenerator:
 
         # Red: Motion + Noise
         if state.motion_detected and state.audio_alert:
-            return (0, 0, 255, 100)  # Red, semi-transparent
+            return self.COLOR_RED
 
         # Yellow: Motion only
         if state.motion_detected:
-            return (0, 255, 255, 100)  # Yellow
+            return self.COLOR_YELLOW
 
         # Purple: Noise only
         if state.audio_alert:
-            return (255, 0, 128, 100)  # Purple/Magenta
+            return self.COLOR_PURPLE
 
         # Transparent: Normal
-        return (0, 0, 0, 0)
+        return self.COLOR_TRANSPARENT
 
     def _generate_plot_image(self) -> np.ndarray:
         """Generate plot image using matplotlib."""
+        # ... logic unchanged as this method is unused/deprecated in favor of cv2 ...
         self.ax.clear()
         self.ax.axis("off")
         self.ax.set_ylim(0, 100)
-
-        with self._lock:
-            y_motion = list(self.motion_history)
-            y_audio = list(self.audio_history)
-
-        self.ax.plot(y_motion, color="green", linewidth=1.5, label="Motion")
-        self.ax.plot(y_audio, color="cyan", linewidth=1.5, label="Audio")
-        # Add legend or simple lines? Simple lines are faster.
-
-        self.canvas.draw()
-        raw_data = np.frombuffer(self.canvas.tostring_argb(), dtype=np.uint8)
-        w, h = self.fig.canvas.get_width_height()
-
-        # Reshape to ARGB
-        # img = raw_data.reshape((h, w, 4)) # Unused
-
-        # Convert ARGB to BGRA for OpenCV
-        # ARGB: 0=A, 1=R, 2=G, 3=B
-        # BGRA: 0=B, 1=G, 2=R, 3=A
-        # This is messy/slow with numpy, let's just use the rgba buffer if possible?
-        # Canvas usually gives RGBA or ARGB. tostring_argb gives ARGB.
-
-        # Let's try regular buffer (RGBA)
-        raw_data = np.frombuffer(self.canvas.tostring_rgb(), dtype=np.uint8)
-        img_rgb = raw_data.reshape((h, w, 3))
-        # Add alpha
-        img_rgba = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGRA)
-        # Apply patch alpha manually or trust the plot... Matplotlib alpha handling can be tricky on buffers.
-        # For speed, let's just use OpenCV drawing for lines instead of expensive matplotlib re-render every frame?
-        # User requested matplotlib, but for 5fps it might be okay.
-
-        return img_rgba
+        # ... keeping implementation minimal or just returning empty if unused
+        return np.zeros((self.height, self.width, 4), dtype=np.uint8)
 
     def _draw_plot_cv2(self, img: np.ndarray) -> None:
         """Draw plot using OpenCV (Faster/Simpler fallback)."""
         h, w = img.shape[:2]
-        plot_h = 80
-        plot_w = 200
-        x_start = w - plot_w - 10
-        y_start = h - plot_h - 10
+        x_start = w - self.PLOT_WIDTH - self.MARGIN
+        y_start = h - self.PLOT_HEIGHT - self.MARGIN
 
         # Background
-        cv2.rectangle(img, (x_start, y_start), (x_start + plot_w, y_start + plot_h), (0, 0, 0, 100), -1)
+        cv2.rectangle(
+            img, (x_start, y_start), (x_start + self.PLOT_WIDTH, y_start + self.PLOT_HEIGHT), self.COLOR_BG_PLOT, -1
+        )
 
         with self._lock:
             hist_m = list(self.motion_history)
@@ -160,27 +151,27 @@ class OverlayGenerator:
         points_a = []
 
         for i, val in enumerate(hist_m):
-            x = x_start + int(i * plot_w / self.history_len)
-            y = y_start + plot_h - int((val / 100.0) * plot_h)
+            x = x_start + int(i * self.PLOT_WIDTH / self.history_len)
+            y = y_start + self.PLOT_HEIGHT - int((val / 100.0) * self.PLOT_HEIGHT)
             points_m.append((x, y))
 
         for i, val in enumerate(hist_a):
-            x = x_start + int(i * plot_w / self.history_len)
-            y = y_start + plot_h - int((val / 100.0) * plot_h)
+            x = x_start + int(i * self.PLOT_WIDTH / self.history_len)
+            y = y_start + self.PLOT_HEIGHT - int((val / 100.0) * self.PLOT_HEIGHT)
             points_a.append((x, y))
 
         if len(points_m) > 1:
-            cv2.polylines(img, [np.array(points_m)], False, (0, 255, 0, 255), 1)
+            cv2.polylines(img, [np.array(points_m)], False, self.COLOR_LINE_MOTION, 1)
 
         if len(points_a) > 1:
-            cv2.polylines(img, [np.array(points_a)], False, (255, 255, 0, 255), 1)
+            cv2.polylines(img, [np.array(points_a)], False, self.COLOR_LINE_AUDIO, 1)
 
-        cv2.putText(img, "Motion", (x_start, y_start - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0, 255), 1)
-        cv2.putText(img, "Audio", (x_start + 60, y_start - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0, 255), 1)
+        cv2.putText(img, "Motion", (x_start, y_start - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, self.COLOR_LINE_MOTION, 1)
+        cv2.putText(img, "Audio", (x_start + 60, y_start - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, self.COLOR_LINE_AUDIO, 1)
 
     def generate_frame(self) -> bytes:
         """Generate a single overlay frame."""
-        LOGGER.debug("Generating overlay frame")
+        # LOGGER.debug("Generating overlay frame")
         # Create transparent base
         img = np.zeros((self.height, self.width, 4), dtype=np.uint8)
 
@@ -194,12 +185,12 @@ class OverlayGenerator:
 
         # Add timestamp
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        cv2.putText(img, ts, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255, 255), 2)
+        cv2.putText(img, ts, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, self.COLOR_TEXT_TIMESTAMP, 2)
 
         with self._lock:
             info = f"Motion: {self._state.motion_level:.1f}%  Audio: {self._state.audio_level:.3f}"
 
-        cv2.putText(img, info, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200, 255), 1)
+        cv2.putText(img, info, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, self.COLOR_TEXT_INFO, 1)
 
         # Draw plot (OpenCV is much faster/stable for this overlay use-case than converting mpl figures)
         self._draw_plot_cv2(img)

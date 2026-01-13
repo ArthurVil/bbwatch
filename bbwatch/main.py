@@ -170,7 +170,9 @@ class BabyMonitor:
         overlay_pipe = self.config.data_dir / "overlays/overlay.pipe"
         if self.config.alerts.enable_dynamic_overlay:
             LOGGER.info(f"Initializing dynamic overlay generator (pipe={overlay_pipe})")
-            self._overlay_generator = OverlayGenerator(pipe_path=overlay_pipe, fps=self.config.alerts.overlay_fps)
+            self._overlay_generator = OverlayGenerator(
+                pipe_path=overlay_pipe, fps=self.config.alerts.overlay_fps, history_len=self.config.motion.history_len
+            )
             self._overlay_generator.start()
         else:
             LOGGER.info("Dynamic overlay disabled by config")

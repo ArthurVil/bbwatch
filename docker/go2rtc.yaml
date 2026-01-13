@@ -1,22 +1,22 @@
 streams:
   # Base hardware capture sources - these auto-start to avoid resource conflicts
   device_video:
-    - "exec:ffmpeg -hide_banner -f video4linux2 -input_format yuyv422 -video_size 640x480 -framerate 30 -i /dev/video0 -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -f rtsp {output}#autostart"
+    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f video4linux2 -input_format yuyv422 -video_size 640x480 -framerate 30 -i /dev/video0 -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -f rtsp {output}#autostart"
   
   device_audio:
-    - "exec:ffmpeg -hide_banner -f pulse -i alsa_input.usb-Sunplus_IT_Co_WEBCAM_ESSENTIELB_W1_AN20200706002-02.mono-fallback -c:a aac -b:a 128k -f rtsp {output}#autostart"
+    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f pulse -i alsa_input.usb-Sunplus_IT_Co_WEBCAM_ESSENTIELB_W1_AN20200706002-02.mono-fallback -c:a aac -b:a 128k -f rtsp {output}#autostart"
 
   # Stream for bbwatch (motion detection) - consumes device_video via RTSP
-  raw_video:
+  raw_video: 
     - rtsp://127.0.0.1:8554/device_video
 
   # Combined stream with dynamic overlay - pulls from hardware and overlay pipe
   babycam:
     - "exec:ffmpeg -hide_banner -v error \
-      -i rtsp://127.0.0.1:8554/device_video \
-      -i rtsp://127.0.0.1:8554/device_audio \
+      -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_video \
+      -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_audio \
       -f rawvideo -pixel_format rgba -video_size 640x480 -framerate 5 -i /app/data/overlays/overlay.pipe \
-      -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=0' \
+      -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=1' \
       -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
       -c:a copy \
       -f rtsp {output}"
