@@ -256,12 +256,12 @@ class OverlayGenerator:
                 LOGGER.error(f"Overlay loop error: {e}")
                 time.sleep(2)  # Wait before retry
 
-    def start(self):
+    def start(self) -> None:
         """Start the overlay thread."""
         self.thread = threading.Thread(target=self.run_loop, daemon=True)
         self.thread.start()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the loop."""
         self.running = False
         if hasattr(self, "thread"):

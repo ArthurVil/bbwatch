@@ -79,12 +79,14 @@ class MotionDetector:
             _, thresh = cv2.threshold(frame_diff, self.threshold, 255, cv2.THRESH_BINARY)
 
             # Dilate to fill gaps
-            thresh = cv2.dilate(thresh, None, iterations=self.dilation_iterations)
+            # Use default 3x3 kernel explicitly for mypy compatibility
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            thresh = cv2.dilate(thresh, kernel, iterations=self.dilation_iterations)
 
             # Calculate percentage
             motion_pixels = np.sum(thresh > 0)
             total_pixels = thresh.shape[0] * thresh.shape[1]
-            motion_percent = (motion_pixels / total_pixels) * 100
+            motion_percent = float((motion_pixels / total_pixels) * 100)
 
         self._prev_gray = gray
 
