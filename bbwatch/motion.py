@@ -25,6 +25,9 @@ class MotionDetector:
         threshold: int = 25,
         blur_size: int = 21,
         history_len: int = 100,
+        motion_threshold_percent: float = 1.0,
+        dilation_iterations: int = 2,
+        fps: int = 10,
     ) -> None:
         """Initialize motion detector.
 
@@ -33,10 +36,17 @@ class MotionDetector:
             threshold: Pixel difference threshold (0-255).
             blur_size: Gaussian blur kernel size (must be odd).
             history_len: Number of frames to keep in motion history.
+            motion_threshold_percent: Motion percentage to trigger detection.
+            dilation_iterations: Number of dilation iterations for morphology.
+            fps: Target frame rate for motion detection.
         """
         self.device_index = device_index
         self.threshold = threshold
         self.blur_size = blur_size
+        self.motion_threshold_percent = motion_threshold_percent
+        self.dilation_iterations = dilation_iterations
+        self.fps = fps
+        self.frame_delay = 1.0 / fps  # Pre-calculate sleep time
 
         self._prev_gray: np.ndarray | None = None
         self._current_motion: float = 0.0
@@ -69,7 +79,7 @@ class MotionDetector:
             _, thresh = cv2.threshold(frame_diff, self.threshold, 255, cv2.THRESH_BINARY)
 
             # Dilate to fill gaps
-            thresh = cv2.dilate(thresh, None, iterations=2)
+            thresh = cv2.dilate(thresh, None, iterations=self.dilation_iterations)
 
             # Calculate percentage
             motion_pixels = np.sum(thresh > 0)
@@ -82,7 +92,7 @@ class MotionDetector:
             self._current_motion = motion_percent
             self._motion_history.append(motion_percent)
 
-        return motion_percent, motion_percent > 1.0
+        return motion_percent, motion_percent > self.motion_threshold_percent
 
     def get_current_motion(self) -> float:
         """Get the most recent motion percentage."""
@@ -127,7 +137,7 @@ class MotionDetector:
                 continue
 
             self.process_frame(frame)
-            time.sleep(0.1)  # 10 FPS is enough for motion
+            time.sleep(self.frame_delay)  # Configurable FPS
 
         cap.release()
         LOGGER.info("Motion detection stopped")

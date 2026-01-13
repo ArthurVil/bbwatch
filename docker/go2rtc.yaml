@@ -16,7 +16,7 @@ streams:
       -i rtsp://127.0.0.1:8554/device_video \
       -i rtsp://127.0.0.1:8554/device_audio \
       -f rawvideo -pixel_format rgba -video_size 640x480 -framerate 5 -i /app/data/overlays/overlay.pipe \
-      -filter_complex '[0:v][2:v]overlay=0:0' \
+      -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=0' \
       -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
       -c:a copy \
       -f rtsp {output}"

@@ -13,7 +13,7 @@ LOGGER = logging.getLogger(__name__)
 class AudioConfig(BaseModel):
     """Audio capture configuration."""
 
-    segment_duration_s: float = Field(default=3.0, ge=0.5, le=10.0)
+    segment_duration_s: float = Field(default=3.0, ge=0.1, le=10.0)
     overlap_s: float = Field(default=1.0, ge=0.0)
     sample_rate: int = Field(default=16000, ge=8000, le=48000)
     channels: int = Field(default=1, ge=1, le=2)
@@ -94,6 +94,34 @@ class AlertConfig(BaseModel):
         return v
 
 
+class MotionConfig(BaseModel):
+    """Motion detection configuration."""
+
+    # Frame differencing parameters
+    threshold: int = Field(default=25, ge=1, le=255, description="Pixel difference threshold (0-255)")
+    blur_size: int = Field(default=21, ge=3, description="Gaussian blur kernel size (must be odd)")
+
+    # Morphological operations
+    dilation_iterations: int = Field(default=2, ge=0, le=10, description="Dilate iterations to fill motion gaps")
+
+    # Detection sensitivity
+    motion_threshold_percent: float = Field(
+        default=1.0, ge=0.1, le=50.0, description="Percentage of pixels changed to trigger motion"
+    )
+
+    # History and performance
+    history_len: int = Field(default=100, ge=1, le=1000, description="Motion history buffer size")
+    fps: int = Field(default=10, ge=1, le=30, description="Motion detection frame rate")
+
+    @field_validator("blur_size")
+    @classmethod
+    def blur_size_must_be_odd(cls, v: int) -> int:
+        """Ensure blur_size is odd for Gaussian blur."""
+        if v % 2 == 0:
+            raise ValueError(f"blur_size must be odd, got {v}")
+        return v
+
+
 class BBWatchConfig(BaseSettings):
     """Main configuration for bbwatch."""
 
@@ -107,6 +135,7 @@ class BBWatchConfig(BaseSettings):
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     alerts: AlertConfig = Field(default_factory=AlertConfig)
+    motion: MotionConfig = Field(default_factory=MotionConfig)
 
     # Runtime options
     log_level: str = Field(default="INFO")

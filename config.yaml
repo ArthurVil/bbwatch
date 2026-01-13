@@ -1,7 +1,7 @@
 # Audio capture configuration
 audio:
-  segment_duration_s: 1.0
-  overlap_s: 0.5
+  segment_duration_s: .33
+  overlap_s: 0.1
   sample_rate: 48000
   channels: 1
   device_index: "plughw:1,0"  # WEBCAM ESSENTIELB W1 mic (use plughw: for format conversion) 
@@ -25,8 +25,17 @@ storage:
 alerts:
   status_file: status.json
   overlay_dir: overlays
-  alert_cooldown_s: 5.0
-  health_timeout_s: 10.0
+  alert_cooldown_s: 1.0
+  health_timeout_s: 3.0
+
+# Motion detection parameters
+motion:
+  threshold: 20                      # Pixel difference threshold (1-255): lower = more sensitive
+  blur_size: 5                       # Gaussian blur kernel size (must be odd): higher = less noise
+  dilation_iterations: 1             # Morphology iterations to fill gaps (0-10): higher = larger motion blobs
+  motion_threshold_percent: 10.0     # % of changed pixels to trigger (0.1-50): lower = more sensitive
+  history_len: 25                    # Motion history buffer size (10-1000)
+  fps: 10                            # Motion detection frame rate (1-30): higher = more responsive
 
 # Runtime options
 log_level: INFO

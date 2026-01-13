@@ -180,6 +180,7 @@ class OverlayGenerator:
 
     def generate_frame(self) -> bytes:
         """Generate a single overlay frame."""
+        LOGGER.debug("Generating overlay frame")
         # Create transparent base
         img = np.zeros((self.height, self.width, 4), dtype=np.uint8)
 
@@ -234,6 +235,7 @@ class OverlayGenerator:
                 with open(self.pipe_path, "wb") as pipe:
                     LOGGER.info("Pipe connected.")
 
+                    last_log = time.time()
                     while self.running:
                         start_time = time.time()
 
@@ -241,6 +243,13 @@ class OverlayGenerator:
                             frame_data = self.generate_frame()
                             pipe.write(frame_data)
                             pipe.flush()
+
+                            # Log heartbeat every 5 seconds (25 frames at 5fps)
+                            if time.time() - last_log > 5.0:
+                                with self._lock:
+                                    LOGGER.info(f"Overlay loop alive - state: motion={self._state.motion_level:.1f}")
+                                last_log = time.time()
+
                         except BrokenPipeError:
                             LOGGER.warning("Pipe broken (reader disconnected), reconnecting...")
                             break  # Break inner loop, retry outer loop

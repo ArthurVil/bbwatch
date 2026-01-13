@@ -15,11 +15,6 @@ from bbwatch.alert import AlertManager
 from bbwatch.capture import SlidingWindowCapture
 from bbwatch.config import BBWatchConfig, get_default_config_path
 from bbwatch.detector import SegmentHandler
-from bbwatch.hardware import (
-    get_preferred_audio_device,
-    get_preferred_video_device,
-    log_detected_hardware,
-)
 from bbwatch.motion import MotionDetector
 from bbwatch.overlay import OverlayController
 from bbwatch.overlay_generator import OverlayGenerator
@@ -161,7 +156,15 @@ class BabyMonitor:
         if self._video_device:
             # Motion Detector
             LOGGER.info(f"Initializing motion detector on {self._video_device}")
-            self._motion_detector = MotionDetector(device_index=self._video_device)
+            self._motion_detector = MotionDetector(
+                device_index=self._video_device,
+                threshold=self.config.motion.threshold,
+                blur_size=self.config.motion.blur_size,
+                history_len=self.config.motion.history_len,
+                motion_threshold_percent=self.config.motion.motion_threshold_percent,
+                dilation_iterations=self.config.motion.dilation_iterations,
+                fps=self.config.motion.fps,
+            )
 
         # Overlay Generator
         overlay_pipe = self.config.data_dir / "overlays/overlay.pipe"
@@ -265,7 +268,7 @@ class BabyMonitor:
                     motion_detected = False
                     if self._motion_detector:
                         motion_level = self._motion_detector.get_current_motion()
-                        motion_detected = motion_level > 1.0  # 1% threshold
+                        motion_detected = motion_level > self.config.motion.motion_threshold_percent
 
                     # Get audio level and alert status
                     audio_level = 0.0
@@ -287,7 +290,7 @@ class BabyMonitor:
                     current, max_size = self._storage.get_usage()
                     # LOGGER.debug(f"Storage: {current:.1f}/{max_size:.1f} MB ({current / max_size * 100:.1f}%)")
 
-                time.sleep(1.0)  # Main loop slow tick
+                time.sleep(0.1)  # Main loop tick (10Hz for responsive overlay updates)
 
         except KeyboardInterrupt:
             LOGGER.info("Received interrupt signal")
