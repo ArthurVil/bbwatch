@@ -23,6 +23,7 @@ WORKDIR /app
 
 # Copy project files for dependency installation
 COPY pyproject.toml ./
+COPY README.md ./
 COPY bbwatch/__init__.py ./bbwatch/
 
 # Install all dependencies including dev + demo extras

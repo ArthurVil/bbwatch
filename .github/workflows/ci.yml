@@ -40,7 +40,9 @@ jobs:
         run: python3 scripts/generate_test_audio.py --output tests/fixtures
 
       - name: Run linting
-        run: python3 -m ruff check bbwatch/ tests/
+        run: |
+          python3 -m pip install ruff
+          python3 -m ruff check bbwatch/ tests/
 
       - name: Run type checking
         run: python3 -m mypy bbwatch/ --ignore-missing-imports

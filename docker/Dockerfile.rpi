@@ -16,6 +16,7 @@ WORKDIR /app
 
 # Copy project files for dependency installation
 COPY pyproject.toml ./
+COPY README.md ./
 COPY bbwatch/ ./bbwatch/
 COPY config.yaml ./
 
