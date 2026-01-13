@@ -97,11 +97,13 @@ class TestBBWatchConfig:
     def test_from_yaml_valid_file(self, tmp_path):
         """Valid YAML should be loaded."""
         config_file = tmp_path / "config.yaml"
-        config_file.write_text("""
+        config_file.write_text(
+            """
 log_level: DEBUG
 detection:
   rms_threshold: 0.05
-""")
+"""
+        )
         config = BBWatchConfig.from_yaml(config_file)
         assert config.log_level == "DEBUG"
         assert config.detection.rms_threshold == 0.05

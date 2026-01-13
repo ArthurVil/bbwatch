@@ -89,7 +89,7 @@ class BabyMonitor:
             return True
 
         # Check for network stream (RTSP/HTTP)
-        network_audio = "://" in self.config.audio.device_index
+        network_audio = isinstance(self.config.audio.device_index, str) and "://" in self.config.audio.device_index
         if network_audio:
             LOGGER.info(f"Using network audio stream: {self.config.audio.device_index}")
             self._audio_device = self.config.audio.device_index

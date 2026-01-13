@@ -144,16 +144,20 @@ graph TD
     Mic[USB Mic] -->|Audio| FFmpeg[FFmpeg Capture]
     
     FFmpeg -->|WAV Segments| Detector[Python Detector]
+    
+    Go2RTC -->|RTSP Stream| Motion[Motion Detector]
+    
     Detector -->|Analysis| Logic{Cry Detected?}
+    Motion -->|Motion Level| Logic
     
     Logic -->|Yes| Alert[Alert Manager]
     Logic -->|No| Store[Storage Manager]
     
-    Alert -->|Red Overlay| Overlay[Overlay Controller]
-    Alert -->|Status File| Go2RTC
+    Alert -->|State Update| Overlay[Overlay Generator]
+    Motion -->|State Update| Overlay
     
     Go2RTC -->|WebRTC/RTSP| Client[Phone/Browser]
-    Overlay -->|FFmpeg Filter| Go2RTC
+    Overlay -->|Pipe/FFmpeg| Go2RTC
 ```
 
 ## Project Structure
