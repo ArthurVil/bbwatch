@@ -1,18 +1,24 @@
-.PHONY: help install install-dev test lint format clean docker-build docker-test docker-demo docker-demo-video docker-demo-motion docker-shell docker-build-rpi devices
+.PHONY: help install install-dev test lint format clean docker-build docker-test docker-demo docker-demo-video docker-demo-motion docker-shell docker-build-rpi devices up down logs restart
 
 # Default target
 help:
 	@echo "BBWatch Development Commands"
 	@echo ""
 	@echo "Development:"
-	@echo "  make install       Install runtime dependencies"
-	@echo "  make install-dev   Install dev dependencies (includes test, lint)"
-	@echo "  make test          Run all tests"
+	@echo "  make install       Install dependencies (poetry)"
+	@echo "  make install-dev   Install dev dependencies"
+	@echo "  make test          Run all tests with coverage"
 	@echo "  make lint          Run ruff + mypy"
 	@echo "  make format        Auto-format code with ruff"
 	@echo "  make clean         Remove build artifacts"
 	@echo ""
-	@echo "Docker:"
+	@echo "Docker Compose Shortcuts:"
+	@echo "  make up            Start services (detached)"
+	@echo "  make down          Stop services"
+	@echo "  make logs          View logs (follow)"
+	@echo "  make restart       Restart services"
+	@echo ""
+	@echo "Docker Dev:"
 	@echo "  make docker-build      Build development image"
 	@echo "  make docker-test       Run tests in Docker"
 	@echo "  make docker-demo       Run audio demo with mic passthrough"
@@ -29,31 +35,30 @@ help:
 # ============================================================================
 
 install:
-	python3 -m pip install -e .
+	poetry install --only main
 
 install-dev:
-	python3 -m pip install -e ".[dev]"
-	python3 -m pip install sounddevice opencv-python
+	poetry install
 
 test:
-	python3 -m pytest tests/ -v --tb=short
+	poetry run pytest tests/ -v --tb=short --cov=bbwatch --cov-report=term-missing
 
 test-unit:
-	python3 -m pytest tests/unit/ -v --tb=short
+	poetry run pytest tests/unit/ -v --tb=short
 
 test-cov:
-	python3 -m pytest tests/ -v --tb=short --cov=bbwatch --cov-report=html
+	poetry run pytest tests/ -v --tb=short --cov=bbwatch --cov-report=html
 
 lint:
-	python3 -m ruff check bbwatch/ tests/
-	python3 -m mypy bbwatch/ --ignore-missing-imports
+	poetry run ruff check bbwatch/ tests/
+	poetry run mypy bbwatch/ --ignore-missing-imports
 
 format-unsafe:
-	python3 -m ruff check bbwatch/ tests/ --fix --unsafe-fixes
+	poetry run ruff check bbwatch/ tests/ --fix --unsafe-fixes
 
 format:
-	python3 -m ruff check bbwatch/ tests/ --fix
-	python3 -m ruff format bbwatch/ tests/
+	poetry run ruff check bbwatch/ tests/ --fix
+	poetry run ruff format bbwatch/ tests/
 
 clean:
 	rm -rf build/ dist/ *.egg-info/ .pytest_cache/ .coverage htmlcov/
@@ -61,7 +66,23 @@ clean:
 	find . -type f -name "*.pyc" -delete
 
 # ============================================================================
-# Docker
+# Docker Compose Shortcuts
+# ============================================================================
+
+up:
+	docker compose -f docker/docker-compose.yml up -d
+
+down:
+	docker compose -f docker/docker-compose.yml down
+
+logs:
+	docker compose -f docker/docker-compose.yml logs -f
+
+restart:
+	docker compose -f docker/docker-compose.yml restart
+
+# ============================================================================
+# Docker Dev
 # ============================================================================
 
 DOCKER_IMAGE := bbwatch
@@ -71,7 +92,7 @@ docker-build:
 	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) -f docker/Dockerfile.dev .
 
 docker-test: docker-build
-	docker run --rm $(DOCKER_IMAGE):$(DOCKER_TAG) python3 -m pytest tests/ -v --tb=short
+	docker run --rm $(DOCKER_IMAGE):$(DOCKER_TAG) pytest tests/ -v --tb=short
 
 docker-demo: docker-build
 	@echo "Starting audio demo with microphone passthrough..."
@@ -149,4 +170,4 @@ docker-build-rpi:
 # ============================================================================
 
 devices:
-	@python3 scripts/list_devices.py
+	@poetry run python3 scripts/list_devices.py

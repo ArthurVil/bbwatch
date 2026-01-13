@@ -190,4 +190,4 @@ We provide a `Makefile` for common tasks:
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+gnu gpl v3 - see [LICENSE](LICENSE)
