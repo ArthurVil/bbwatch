@@ -138,6 +138,15 @@ To achieve low-latency streaming (<1s delay):
 
 ## Architecture
 
+For a deep dive into the system architecture, decision records (ADRs), and perception algorithms, see [docs/architecture.md](docs/architecture.md).
+
+For other guides:
+- [User Guide](docs/user_guide.md): Detailed configuration and usage instructions.
+- [Development Guide](docs/development.md): Setup, testing, and contribution workflows.
+- [Deployment Guide](docs/deployment.md): Step-by-step Raspberry Pi installation.
+
+
+
 ```mermaid
 graph TD
     Cam[USB Camera] -->|Video| Go2RTC[go2rtc Streaming Server]

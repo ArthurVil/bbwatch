@@ -43,6 +43,44 @@
 
 ---
 
+## High-Level Data Flow
+
+```mermaid
+graph TD
+    subgraph Hardware
+        Mic[USB Microphone]
+        Cam[USB Webcam]
+    end
+
+    subgraph "Docker / Host System"
+        direction TB
+        
+        Capture[Capture Module\n(FFmpeg/PulseAudio)]
+        Detector[Detector Module\n(DSP / Bandpass + RMS)]
+        Logic{Alert Logic\nState Machine}
+        
+        Mic -->|Audio Stream| Capture
+        Capture -->|WAV Segments| Detector
+        Detector -->|Analysis Metrics| Logic
+        
+        Logic -->|Verified Cry| AlertMgr[Alert Manager]
+        Logic -->|Silence| Storage[Storage Manager]
+        
+        Cam -->|Video Stream| Go2RTC[Go2RTC Server]
+        AlertMgr -->|Overlay Status| Go2RTC
+    end
+
+    subgraph Clients
+        Web[Web Browser]
+        Phone[Mobile Device]
+    end
+
+    Go2RTC -->|WebRTC/RTSP| Web
+    Go2RTC -->|WebRTC/RTSP| Phone
+```
+
+---
+
 ## Perception Algorithms
 
 ### Libraries
