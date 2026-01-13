@@ -32,7 +32,7 @@ class TestAudioConfig:
     def test_range_validation(self):
         """Values must be within valid ranges."""
         with pytest.raises(ValueError):
-            AudioConfig(segment_duration_s=0.5)  # Too short
+            AudioConfig(segment_duration_s=0.05)  # Too short
 
         with pytest.raises(ValueError):
             AudioConfig(sample_rate=1000)  # Too low
