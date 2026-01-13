@@ -45,7 +45,9 @@ jobs:
           python3 -m ruff check bbwatch/ tests/
 
       - name: Run type checking
-        run: python3 -m mypy bbwatch/ --ignore-missing-imports
+        run: |
+          python3 -m pip install mypy types-PyYAML
+          python3 -m mypy bbwatch/ --ignore-missing-imports
 
       - name: Run unit tests
         run: python3 -m pytest tests/unit/ -v --tb=short --cov=bbwatch --cov-report=xml
