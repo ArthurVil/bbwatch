@@ -99,31 +99,23 @@ def test_process_frame_no_motion(motion_detector, mock_cv2):
     assert not detected
 
 
-def test_run_loop(motion_detector, mock_cv2):
+def test_capture_loop(motion_detector, mock_cv2):
     # Mock VideoCapture
     mock_cap = MagicMock()
     mock_cv2.VideoCapture.return_value = mock_cap
     mock_cap.isOpened.return_value = True
     mock_cap.set.return_value = True
 
-    # Configure threshold return for the loop processing
-    mock_cv2.threshold.return_value = (0, np.zeros((640, 480), dtype=np.uint8))
-    mock_cv2.cvtColor.return_value = np.zeros((640, 480), dtype=np.uint8)
-    mock_cv2.GaussianBlur.return_value = np.zeros((640, 480), dtype=np.uint8)
-    mock_cv2.absdiff.return_value = np.zeros((640, 480), dtype=np.uint8)
-    mock_cv2.dilate.return_value = np.zeros((640, 480), dtype=np.uint8)
-
-    # Return a frame then False (EOF)
+    # Return a frame then False (EOF) to simulate stream end
     mock_frame = np.zeros((10, 10, 3), dtype=np.uint8)
-    mock_cap.read.side_effect = [(True, mock_frame), Exception("Stop loop")]
+    mock_cap.read.side_effect = [(True, mock_frame), RuntimeError("Stop loop")]
 
     # Allow logic to run
     motion_detector.running = True
+    motion_detector._frame_lock = MagicMock()
 
-    with pytest.raises(Exception, match="Stop loop"):
-        # Set frame_delay to 0 to speed up
-        motion_detector.frame_delay = 0
-        motion_detector._run()
+    with pytest.raises(RuntimeError, match="Stop loop"):
+        motion_detector._capture_loop()
 
     mock_cap.release.assert_not_called()  # Crashed before release
 
@@ -137,9 +129,10 @@ def test_start_stop(motion_detector, mock_cv2):
         motion_detector.start()
 
         assert motion_detector.running is True
-        mock_thread.assert_called_once()
-        mock_thread_inst.start.assert_called_once()
+        # Should create 2 threads (capture + process)
+        assert mock_thread.call_count == 2
+        assert mock_thread_inst.start.call_count == 2
 
         motion_detector.stop()
         assert motion_detector.running is False
-        mock_thread_inst.join.assert_called_once()
+        assert mock_thread_inst.join.call_count == 2

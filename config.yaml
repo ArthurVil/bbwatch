@@ -4,7 +4,7 @@ audio:
   overlap_s: 0.1
   sample_rate: 48000
   channels: 1
-  device_index: "plughw:1,0"  # WEBCAM ESSENTIELB W1 mic (use plughw: for format conversion)
+  device_index: "plughw:2,0"  # WEBCAM ESSENTIELB W1 mic (use plughw: for format conversion)
 
 # Cry detection parameters
 detection:
