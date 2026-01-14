@@ -69,6 +69,9 @@ make docker-demo-video
 python3 -m venv .venv
 source .venv/bin/activate
 
+# Install poetry
+pip install poetry
+
 # Install dependencies (including dev tools)
 make install-dev
 
@@ -95,6 +98,13 @@ make test
    ./scripts/deploy.sh
    ```
 
+3. **Alternative: Run from GHCR (Docker)**:
+   If you don't want to build from source, you can pull the pre-built ARM64 image:
+   ```bash
+   docker pull ghcr.io/arthurvil/bbwatch:rpi-latest
+   ```
+   Then run it using the provided `docker/docker-compose.yml` (after adjusting it for your local needs).
+
 ## Configuration
 
 Copy `config.yaml` to customize settings:
@@ -119,6 +129,56 @@ alerts:
 storage:
   max_size_mb: 1024.0        # Max disk usage for recordings
 ```
+
+## Hardware Discovery & Configuration
+
+Before running the full system, you need to identify the correct audio and video devices.
+
+1. **List Devices**:
+   Run the following command to see all detected hardware and the recommended configuration snippet:
+   ```bash
+   make devices
+   ```
+   Example output:
+   ```
+   AUDIO DEVICES (ALSA)
+   card 1: Device [USB Audio], device 0: USB Audio [USB Audio]
+     👉 Suggested config.yaml for 'USB Audio':
+        audio:
+          device_index: "hw:1,0"
+
+   ...
+   VIDEO DEVICE FILES
+     /dev/video0
+     👉 Suggested config.yaml for 'Webcam':
+        motion:
+          device_index: "/dev/video0"
+   ```
+
+   > [!NOTE]
+   > If you see an error like `pactl not found`, it usually means PulseAudio/PipeWire utilities are not installed. You can safely ignore this if you are using ALSA hardware directly (e.g., `hw:1,0`).
+
+2. **Configure `config.yaml`**:
+   Copy the suggested snippet from `make devices` into your `config.yaml`:
+
+   ```yaml
+   audio:
+     device_index: "hw:1,0"   # ALSA ID from 'make devices'
+     channels: 1              # Most webcam mics are mono
+     sample_rate: 16000
+
+   motion:
+     threshold: 25            # Sensitivity (lower = more sensitive)
+     fps: 10                  # Processing rate (balance CPU/responsiveness)
+
+   log_level: "INFO"
+   ```
+
+   > [!TIP]
+   > For Raspberry Pi deployment with `go2rtc`, the `device_index` is automatically set to the RTSP stream in `docker-compose.yml`. You only need to touch this if running locally or debugging.
+
+3. **Disk Management**:
+   The `storage.max_size_mb` setting ensures the monitor doesn't fill your card. It will automatically delete the oldest WAV segments when the limit is reached.
 
 ### Latency Tuning & Performance
 

@@ -39,6 +39,18 @@ def list_audio_devices() -> None:
         )
         if result.stdout.strip():
             print(result.stdout)
+            # Parse and suggest config
+            import re
+
+            pattern = re.compile(r"card (\d+):.*\[(.+?)\].*device (\d+):")
+            for line in result.stdout.splitlines():
+                match = pattern.search(line)
+                if match:
+                    card, name, device = match.groups()
+                    print(f"  👉 Suggested config.yaml for '{name}':")
+                    print("     audio:")
+                    print(f'       device_index: "hw:{card},{device}"')
+                    print()
         else:
             print("No audio capture devices found.\n")
     except FileNotFoundError:
@@ -60,10 +72,19 @@ def list_audio_devices() -> None:
         )
         if result.stdout.strip():
             print(result.stdout)
+            for line in result.stdout.splitlines():
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    name = parts[1]
+                    print(f"  👉 Suggested config.yaml for '{name}':")
+                    print("     audio:")
+                    print(f'       device_index: "{name}"')
+                    print()
         else:
             print("No PulseAudio sources found.\n")
     except FileNotFoundError:
-        print("pactl not found. PulseAudio not available.\n")
+        print("pactl not found. PulseAudio/PipeWire not available or not installed.\n")
+        print("TIP: If you use ALSA directly, you can ignore this.\n")
     except subprocess.TimeoutExpired:
         print("pactl timed out.\n")
 
@@ -83,6 +104,19 @@ def list_video_devices() -> None:
         )
         if result.stdout.strip():
             print(result.stdout)
+            # Parse and suggest config
+            # (Similar logic to hardware.py)
+            lines = result.stdout.splitlines()
+            current_name = "Unknown"
+            for line in lines:
+                if line.endswith(":") and not line.startswith("\t"):
+                    current_name = line.rstrip(":").strip()
+                elif "/dev/video" in line:
+                    path = line.strip()
+                    print(f"  👉 Suggested config.yaml for '{current_name}':")
+                    print("     motion:")
+                    print(f'       device_index: "{path}"')
+                    print()
         else:
             print("No video devices found.\n")
     except FileNotFoundError:

@@ -34,8 +34,8 @@ motion:
   blur_size: 5                       # Gaussian blur kernel size (must be odd): higher = less noise
   dilation_iterations: 1             # Morphology iterations to fill gaps (0-10): higher = larger motion blobs
   motion_threshold_percent: 10.0     # % of changed pixels to trigger (0.1-50): lower = more sensitive
-  history_len: 25                    # Motion history buffer size (10-1000)
-  fps: 5                            # Motion detection frame rate (1-30): higher = more responsive
+  history_len: 10                    # Motion history buffer size (10-1000)
+  fps: 5                             # Motion detection frame rate (1-30): higher = more responsive
 
 # Runtime options
 log_level: INFO

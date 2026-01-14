@@ -1,8 +1,6 @@
 """Functional tests for bbwatch monitor flow."""
 
 import json
-import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -69,7 +67,7 @@ motion:
         ]
 
         # Patch OverlayGenerator to avoid pipe issues and threading complexity for the test
-        with patch("bbwatch.main.OverlayGenerator") as mock_gen_class:
+        with patch("bbwatch.main.OverlayGenerator"):
             # Initialize monitor
             monitor = BabyMonitor(config_path=config_path)
 
@@ -78,8 +76,9 @@ motion:
                 monitor.start()
 
                 # 1. Simulate Motion
-                # Manually process one frame to ensure level > 0
-                monitor._motion_detector.process_frame(frame2)
+                # Process two different frames to ensure level > 0 regardless of thread state
+                monitor._motion_detector.process_frame(frame1)
+                motion_level, _ = monitor._motion_detector.process_frame(frame2)
 
                 # 2. Simulate Audio Cry
                 observer_instance = mock_observer.return_value
