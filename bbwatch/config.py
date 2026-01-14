@@ -10,6 +10,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 LOGGER = logging.getLogger(__name__)
 
 
+class HostConfig(BaseModel):
+    """Host hardware configuration (physical paths)."""
+
+    video_device: str = Field(default="/dev/video0")
+    pulse_source: str = Field(default="")
+    pulse_cookie: Path = Field(default=Path.home() / ".config/pulse/cookie")
+    pulse_server: str = Field(default=f"unix:/run/user/{Path.home().name}/pulse/native")
+
+
 class AudioConfig(BaseModel):
     """Audio capture configuration."""
 
@@ -136,6 +145,7 @@ class BBWatchConfig(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     alerts: AlertConfig = Field(default_factory=AlertConfig)
     motion: MotionConfig = Field(default_factory=MotionConfig)
+    host: HostConfig = Field(default_factory=HostConfig)
 
     # Runtime options
     log_level: str = Field(default="INFO")

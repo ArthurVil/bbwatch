@@ -1,5 +1,12 @@
 .PHONY: help install install-dev test lint format clean docker-build docker-test docker-demo docker-demo-video docker-demo-motion docker-shell docker-build-rpi devices up down logs restart
 
+# Export host variables from config.yaml for docker-compose
+ifneq ("$(wildcard config.yaml)","")
+export HOST_VIDEO_DEVICE ?= $(shell python3 -c 'import yaml; print(yaml.safe_load(open("config.yaml")).get("host", {}).get("video_device", "/dev/video0"))' 2>/dev/null)
+else
+export HOST_VIDEO_DEVICE ?= /dev/video0
+endif
+
 # Default target
 help:
 	@echo "BBWatch Development Commands"

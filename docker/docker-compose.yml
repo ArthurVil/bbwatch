@@ -74,7 +74,7 @@ services:
       - PULSE_SERVER=unix:/run/user/1000/pulse/native
       - PULSE_COOKIE=/root/.config/pulse/cookie
     devices:
-      - /dev/video4:/dev/video0
+      - ${HOST_VIDEO_DEVICE:-/dev/video0}:/dev/video0
       - /dev/snd:/dev/snd
     ports:
       - "1984:1984"
