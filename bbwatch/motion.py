@@ -107,20 +107,32 @@ class MotionDetector:
             return list(self._motion_history)
 
     def start(self) -> None:
-        """Start the motion detection thread."""
+        """Start the motion detection threads."""
         self.running = True
-        self.thread = threading.Thread(target=self._run, daemon=True)
-        self.thread.start()
+
+        # Latest frame buffer (thread-safe)
+        self._latest_frame: np.ndarray | None = None
+        self._frame_lock = Lock()
+
+        # Start capture thread (runs as fast as possible to drain buffer)
+        self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.capture_thread.start()
+
+        # Start processing thread (runs at target FPS)
+        self.process_thread = threading.Thread(target=self._process_loop, daemon=True)
+        self.process_thread.start()
 
     def stop(self) -> None:
-        """Stop the motion detection thread."""
+        """Stop the motion detection threads."""
         self.running = False
-        if hasattr(self, "thread"):
-            self.thread.join(timeout=1.0)
+        if hasattr(self, "capture_thread"):
+            self.capture_thread.join(timeout=1.0)
+        if hasattr(self, "process_thread"):
+            self.process_thread.join(timeout=1.0)
 
-    def _run(self) -> None:
-        """Main capture loop."""
-        LOGGER.info(f"Starting motion detection on device {self.device_index}")
+    def _capture_loop(self) -> None:
+        """Continuously grab frames to keep buffer fresh."""
+        LOGGER.info(f"Starting capture loop on {self.device_index}")
         cap = cv2.VideoCapture(self.device_index)
 
         if not cap.isOpened():
@@ -131,6 +143,9 @@ class MotionDetector:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
+        # Set buffer size to 1 if possible (backend dependent)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
         while self.running:
             ret, frame = cap.read()
             if not ret:
@@ -138,8 +153,34 @@ class MotionDetector:
                 time.sleep(1)
                 continue
 
-            self.process_frame(frame)
-            time.sleep(self.frame_delay)  # Configurable FPS
+            # Store latest frame
+            with self._frame_lock:
+                self._latest_frame = frame
+
+            # No sleep here! Consume frames as fast as possible.
 
         cap.release()
-        LOGGER.info("Motion detection stopped")
+        LOGGER.info("Capture loop stopped")
+
+    def _process_loop(self) -> None:
+        """Process the latest available frame at target FPS."""
+        LOGGER.info("Starting processing loop")
+
+        while self.running:
+            start_time = time.time()
+
+            # Get latest frame
+            frame_to_process = None
+            with self._frame_lock:
+                if self._latest_frame is not None:
+                    frame_to_process = self._latest_frame.copy()
+
+            if frame_to_process is not None:
+                self.process_frame(frame_to_process)
+
+            # Maintain target FPS
+            elapsed = time.time() - start_time
+            delay = max(0.0, self.frame_delay - elapsed)
+            time.sleep(delay)
+
+        LOGGER.info("Processing loop stopped")

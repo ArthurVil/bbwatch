@@ -68,60 +68,63 @@ motion:
 
         # Patch OverlayGenerator to avoid pipe issues and threading complexity for the test
         with patch("bbwatch.main.OverlayGenerator"):
-            # Initialize monitor
-            monitor = BabyMonitor(config_path=config_path)
+            # Patch MotionDetector start/stop to prevent background threads from interfering
+            # We want to manually drive the frame processing to verify logic deterministically
+            with patch("bbwatch.motion.MotionDetector.start"), patch("bbwatch.motion.MotionDetector.stop"):
+                # Initialize monitor
+                monitor = BabyMonitor(config_path=config_path)
 
-            try:
-                # Start monitor
-                monitor.start()
+                try:
+                    # Start monitor
+                    monitor.start()
 
-                # 1. Simulate Motion
-                # Process two different frames to ensure level > 0 regardless of thread state
-                monitor._motion_detector.process_frame(frame1)
-                motion_level, _ = monitor._motion_detector.process_frame(frame2)
+                    # 1. Simulate Motion
+                    # Process two different frames to ensure level > 0 regardless of thread state
+                    monitor._motion_detector.process_frame(frame1)
+                    motion_level, _ = monitor._motion_detector.process_frame(frame2)
 
-                # 2. Simulate Audio Cry
-                observer_instance = mock_observer.return_value
-                args, _ = observer_instance.schedule.call_args
-                handler = args[0]
+                    # 2. Simulate Audio Cry
+                    observer_instance = mock_observer.return_value
+                    args, _ = observer_instance.schedule.call_args
+                    handler = args[0]
 
-                # Mock event for baby cry
-                event = MagicMock(src_path=str(baby_cry_wav), is_directory=False)
-                handler.on_closed(event)
+                    # Mock event for baby cry
+                    event = MagicMock(src_path=str(baby_cry_wav), is_directory=False)
+                    handler.on_closed(event)
 
-                # 3. Simulate one loop iteration update
-                monitor._overlay_controller.update()
+                    # 3. Simulate one loop iteration update
+                    monitor._overlay_controller.update()
 
-                # Get levels
-                motion_level = monitor._motion_detector.get_current_motion()
-                audio_activity = monitor._alert_manager.alert_active
-                audio_intensity = monitor._alert_manager.current_intensity
+                    # Get levels
+                    motion_level = monitor._motion_detector.get_current_motion()
+                    audio_activity = monitor._alert_manager.alert_active
+                    audio_intensity = monitor._alert_manager.current_intensity
 
-                # Verify logic
-                assert audio_activity is True, f"Audio alert should be active, intensity={audio_intensity}"
-                assert motion_level > 0, "Motion level should be positive"
+                    # Verify logic
+                    assert audio_activity is True, f"Audio alert should be active, intensity={audio_intensity}"
+                    assert motion_level > 0, "Motion level should be positive"
 
-                # Trigger overlay update (as run() would)
-                monitor._overlay_generator.update_state(
-                    motion_detected=(motion_level > monitor.config.motion.motion_threshold_percent),
-                    audio_alert=audio_activity,
-                    motion_level=motion_level,
-                    audio_level=audio_intensity,
-                )
+                    # Trigger overlay update (as run() would)
+                    monitor._overlay_generator.update_state(
+                        motion_detected=(motion_level > monitor.config.motion.motion_threshold_percent),
+                        audio_alert=audio_activity,
+                        motion_level=motion_level,
+                        audio_level=audio_intensity,
+                    )
 
-                # Verify states
-                monitor._overlay_generator.update_state.assert_called()
+                    # Verify states
+                    monitor._overlay_generator.update_state.assert_called()
 
-                # Verify status file exists at the RESOLVED path
-                resolved_status_file = monitor.config.alerts.status_file
-                assert resolved_status_file.exists(), f"Status file missing at {resolved_status_file}"
+                    # Verify status file exists at the RESOLVED path
+                    resolved_status_file = monitor.config.alerts.status_file
+                    assert resolved_status_file.exists(), f"Status file missing at {resolved_status_file}"
 
-                status_data = json.loads(resolved_status_file.read_text())
-                assert status_data["alert_active"] is True
-                assert status_data["intensity"] == audio_intensity
+                    status_data = json.loads(resolved_status_file.read_text())
+                    assert status_data["alert_active"] is True
+                    assert status_data["intensity"] == audio_intensity
 
-            finally:
-                monitor.stop()
+                finally:
+                    monitor.stop()
 
     @patch("bbwatch.main.SlidingWindowCapture")
     @patch("bbwatch.main.Observer")

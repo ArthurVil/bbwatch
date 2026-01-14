@@ -3,8 +3,10 @@
 # Export host variables from config.yaml for docker-compose
 ifneq ("$(wildcard config.yaml)","")
 export HOST_VIDEO_DEVICE ?= $(shell python3 -c 'import yaml; print(yaml.safe_load(open("config.yaml")).get("host", {}).get("video_device", "/dev/video0"))' 2>/dev/null)
+export HOST_AUDIO_SOURCE ?= $(shell python3 -c 'import yaml; print(yaml.safe_load(open("config.yaml")).get("host", {}).get("pulse_source", ""))' 2>/dev/null)
 else
 export HOST_VIDEO_DEVICE ?= /dev/video0
+export HOST_AUDIO_SOURCE ?=
 endif
 
 # Default target

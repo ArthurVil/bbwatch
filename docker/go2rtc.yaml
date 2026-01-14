@@ -4,7 +4,7 @@ streams:
     - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f video4linux2 -input_format yuyv422 -video_size 640x480 -framerate 30 -i /dev/video0 -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -f rtsp {output}#autostart"
   
   device_audio:
-    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f pulse -i alsa_input.usb-Sunplus_IT_Co_WEBCAM_ESSENTIELB_W1_AN20200706002-02.mono-fallback -c:a aac -b:a 128k -f rtsp {output}#autostart"
+    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f pulse -i ${HOST_AUDIO_SOURCE} -c:a aac -b:a 128k -f rtsp {output}#autostart"
 
   # Stream for bbwatch (motion detection) - consumes device_video via RTSP
   raw_video: 
