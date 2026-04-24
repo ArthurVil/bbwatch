@@ -85,6 +85,9 @@ class AlertConfig(BaseModel):
     screenshot_on_peak: bool = Field(default=True)
     health_timeout_s: float = Field(default=10.0, ge=1.0)
 
+    # Video stream for recording/screenshots (RTSP URL)
+    stream_url: str = Field(default="rtsp://localhost:8554/babycam")
+
     # Output directories
     clips_dir: Path = Field(default=Path("clips"))
     screenshots_dir: Path = Field(default=Path("screenshots"))
