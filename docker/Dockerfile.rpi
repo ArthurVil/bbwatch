@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     alsa-utils \
     v4l-utils \
     libsndfile1 \
+    libcamera0 \
+    libcamera-dev \
+    libcamera-tools \
+    python3-picamera2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
