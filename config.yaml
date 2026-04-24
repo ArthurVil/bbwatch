@@ -46,3 +46,13 @@ data_dir: ~/bbwatch_data
 host:
   video_device: "/dev/video0"        # Physical video device to pass to Docker
   pulse_source: ""                   # (Optional) Specific PulseAudio source name
+
+# === Raspberry Pi 5 + Pi Camera Module 3 ===
+# On RPi5, bbwatch automatically detects Pi Camera modules via libcamera.
+# No manual config is required — motion detection will use go2rtc's RTSP restream.
+# To verify detection, run: make devices
+#
+# For Docker on RPi5:
+#   - Dockerfile.rpi includes libcamera and picamera2 packages
+#   - go2rtc.yaml uses native rpicam source: rpicam:0
+#   - docker-compose.yml mounts /dev/media0 for libcamera access

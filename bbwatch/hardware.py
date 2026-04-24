@@ -117,6 +117,40 @@ def detect_video_devices() -> list[VideoDevice]:
     return devices
 
 
+def detect_picamera_devices() -> list[VideoDevice]:
+    """Detect available Raspberry Pi Camera modules via libcamera.
+
+    Returns:
+        List of detected Pi Camera devices. Empty list if none found or on error.
+    """
+    try:
+        result = subprocess.run(
+            ["libcamera-hello", "--list-cameras"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+        LOGGER.debug(f"Pi Camera detection skipped (libcamera not available): {e}")
+        return []
+
+    devices = []
+
+    # Pattern: "0 : imx708 [4608x2592 10-bit RGGB]"
+    pattern = re.compile(r"(\d+)\s*:\s*(.+?)\s*\[")
+
+    for line in result.stdout.splitlines():
+        match = pattern.search(line)
+        if match:
+            camera_index = match.group(1)
+            camera_name = match.group(2).strip()
+            # Create a VideoDevice with rpicam:<index> path
+            devices.append(VideoDevice(path=f"rpicam:{camera_index}", name=f"Pi Camera {camera_index} ({camera_name})"))
+
+    return devices
+
+
 def log_detected_hardware() -> tuple[list[AudioDevice], list[VideoDevice]]:
     """Detect and log all available hardware at startup.
 
@@ -125,6 +159,7 @@ def log_detected_hardware() -> tuple[list[AudioDevice], list[VideoDevice]]:
     """
     audio_devices = detect_audio_devices()
     video_devices = detect_video_devices()
+    picamera_devices = detect_picamera_devices()
 
     LOGGER.info("=" * 50)
     LOGGER.info("DETECTED HARDWARE")
@@ -137,16 +172,25 @@ def log_detected_hardware() -> tuple[list[AudioDevice], list[VideoDevice]]:
     else:
         LOGGER.warning("  No audio capture devices found!")
 
-    LOGGER.info("Video Capture Devices:")
+    LOGGER.info("Video Capture Devices (V4L2):")
     if video_devices:
         for vdev in video_devices:
             LOGGER.info(f"  {vdev}")
     else:
-        LOGGER.warning("  No video capture devices found!")
+        LOGGER.info("  No V4L2 video devices found")
+
+    LOGGER.info("Raspberry Pi Camera Modules:")
+    if picamera_devices:
+        for pdev in picamera_devices:
+            LOGGER.info(f"  {pdev}")
+    else:
+        LOGGER.debug("  No Pi Camera modules detected")
 
     LOGGER.info("=" * 50)
 
-    return audio_devices, video_devices
+    # Combine video devices (rpicam + v4l2)
+    all_video_devices = picamera_devices + video_devices
+    return audio_devices, all_video_devices
 
 
 def get_preferred_audio_device(devices: list[AudioDevice]) -> AudioDevice | None:
@@ -175,7 +219,7 @@ def get_preferred_audio_device(devices: list[AudioDevice]) -> AudioDevice | None
 def get_preferred_video_device(devices: list[VideoDevice]) -> VideoDevice | None:
     """Get the preferred video device for capture.
 
-    Prefers /dev/video0 if available, or first device.
+    Prefers rpicam (native Pi Camera) if available, then /dev/video0, else first device.
 
     Args:
         devices: List of detected video devices.
@@ -186,7 +230,12 @@ def get_preferred_video_device(devices: list[VideoDevice]) -> VideoDevice | None
     if not devices:
         return None
 
-    # Prefer /dev/video0
+    # Prefer rpicam (native Pi Camera over V4L2)
+    for dev in devices:
+        if dev.path.startswith("rpicam:"):
+            return dev
+
+    # Prefer /dev/video0 (V4L2)
     for dev in devices:
         if dev.path == "/dev/video0":
             return dev
