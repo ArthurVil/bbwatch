@@ -75,7 +75,8 @@ services:
       - PULSE_COOKIE=/root/.config/pulse/cookie
       - HOST_AUDIO_SOURCE=${HOST_AUDIO_SOURCE}
     devices:
-      - ${HOST_VIDEO_DEVICE:-/dev/video0}:/dev/video0
+      - /dev/media0:/dev/media0
+      - /dev/video0:/dev/video0
       - /dev/snd:/dev/snd
     ports:
       - "1984:1984"
