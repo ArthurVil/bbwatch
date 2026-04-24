@@ -7,8 +7,11 @@ writes status for the overlay, and handles side effects like recording clips.
 import enum
 import json
 import logging
+import subprocess
+import threading
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime
 
 from bbwatch.config import AlertConfig
 
@@ -48,6 +51,8 @@ class AlertManager:
         self._last_trigger_time = 0.0
         self._cooldown_start_time = 0.0
         self._current_intensity = 0.0
+        self._recording_process: subprocess.Popen | None = None
+        self._recording_lock = threading.Lock()
 
     @property
     def current_intensity(self) -> float:
@@ -157,16 +162,85 @@ class AlertManager:
         self._stop_recording()
 
     def _capture_screenshot(self) -> None:
-        """Capture screenshot from video stream (Stub)."""
-        # TODO: Implement ffmpeg screenshot capture
-        # ffmpeg -y -i rtsp://... -vframes 1 ...
-        LOGGER.debug(f"Would capture screenshot to {self.config.screenshots_dir}")
+        """Capture screenshot from video stream via FFmpeg."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = self.config.screenshots_dir / f"{timestamp}.jpg"
+
+        # Ensure directory exists
+        self.config.screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-rtsp_transport",
+                    "tcp",
+                    "-i",
+                    self.config.stream_url,
+                    "-vframes",
+                    "1",
+                    "-q:v",
+                    "5",
+                    str(output_path),
+                ],
+                timeout=10,
+                check=True,
+                capture_output=True,
+            )
+            LOGGER.info(f"Screenshot saved: {output_path}")
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
+            LOGGER.error(f"Failed to capture screenshot: {e}")
 
     def _start_recording(self) -> None:
-        """Start video recording (Stub)."""
-        # TODO: Implement ffmpeg recording
-        LOGGER.debug(f"Would start recording to {self.config.clips_dir}")
+        """Start video recording via FFmpeg in background thread."""
+        with self._recording_lock:
+            if self._recording_process is not None:
+                LOGGER.warning("Recording already in progress, ignoring start request")
+                return
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = self.config.clips_dir / f"{timestamp}.mp4"
+
+            # Ensure directory exists
+            self.config.clips_dir.mkdir(parents=True, exist_ok=True)
+
+            try:
+                self._recording_process = subprocess.Popen(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-rtsp_transport",
+                        "tcp",
+                        "-i",
+                        self.config.stream_url,
+                        "-t",
+                        str(int(self.config.record_clip_s)),
+                        "-c",
+                        "copy",
+                        str(output_path),
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                LOGGER.info(f"Recording started: {output_path}")
+            except FileNotFoundError as e:
+                LOGGER.error(f"Failed to start recording (ffmpeg not found): {e}")
+                self._recording_process = None
 
     def _stop_recording(self) -> None:
-        """Stop video recording (Stub)."""
-        LOGGER.debug("Would stop recording")
+        """Stop video recording gracefully."""
+        with self._recording_lock:
+            if self._recording_process is None:
+                return
+
+            try:
+                self._recording_process.terminate()
+                self._recording_process.wait(timeout=5)
+                LOGGER.info("Recording stopped")
+            except subprocess.TimeoutExpired:
+                LOGGER.warning("Recording process did not terminate in time, killing")
+                self._recording_process.kill()
+                self._recording_process.wait()
+            finally:
+                self._recording_process = None
