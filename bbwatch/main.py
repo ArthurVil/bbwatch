@@ -118,8 +118,13 @@ class BabyMonitor:
         if video is None:
             LOGGER.warning("No local video device found - motion detection will be disabled")
         else:
-            self._video_device = video.path
-            LOGGER.info(f"Using video device for motion: {video}")
+            # If rpicam device, motion detection must use RTSP restream from go2rtc
+            if video.path.startswith("rpicam:"):
+                self._video_device = "rtsp://localhost:8554/raw_video"
+                LOGGER.info(f"Using Pi Camera via go2rtc RTSP restream for motion: {video}")
+            else:
+                self._video_device = video.path
+                LOGGER.info(f"Using video device for motion: {video}")
 
         return True
 
