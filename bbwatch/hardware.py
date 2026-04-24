@@ -11,6 +11,10 @@ from dataclasses import dataclass
 
 LOGGER = logging.getLogger(__name__)
 
+# Compiled regexes for device detection
+_AUDIO_DEVICE_PATTERN = re.compile(r"card (\d+):.*\[(.+?)\].*device (\d+):")
+_PICAMERA_PATTERN = re.compile(r"(\d+)\s*:\s*(.+?)\s*\[")
+
 
 @dataclass
 class AudioDevice:
@@ -60,11 +64,8 @@ def detect_audio_devices() -> list[AudioDevice]:
 
     devices = []
 
-    # Pattern: "card 1: Device [USB Audio], device 0: USB Audio [USB Audio]"
-    pattern = re.compile(r"card (\d+):.*\[(.+?)\].*device (\d+):")
-
     for line in result.stdout.splitlines():
-        match = pattern.search(line)
+        match = _AUDIO_DEVICE_PATTERN.search(line)
         if match:
             card = int(match.group(1))
             name = match.group(2)
@@ -137,11 +138,8 @@ def detect_picamera_devices() -> list[VideoDevice]:
 
     devices = []
 
-    # Pattern: "0 : imx708 [4608x2592 10-bit RGGB]"
-    pattern = re.compile(r"(\d+)\s*:\s*(.+?)\s*\[")
-
     for line in result.stdout.splitlines():
-        match = pattern.search(line)
+        match = _PICAMERA_PATTERN.search(line)
         if match:
             camera_index = match.group(1)
             camera_name = match.group(2).strip()

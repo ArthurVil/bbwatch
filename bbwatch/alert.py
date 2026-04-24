@@ -18,6 +18,11 @@ from bbwatch.config import AlertConfig
 LOGGER = logging.getLogger(__name__)
 
 
+def _timestamp_filename() -> str:
+    """Generate timestamp string for filenames (YYYYMMDD_HHMMSS)."""
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
 class AlertState(str, enum.Enum):
     """System alert states."""
 
@@ -53,6 +58,10 @@ class AlertManager:
         self._current_intensity = 0.0
         self._recording_process: subprocess.Popen | None = None
         self._recording_lock = threading.Lock()
+
+        # Pre-create output directories
+        self.config.screenshots_dir.mkdir(parents=True, exist_ok=True)
+        self.config.clips_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def current_intensity(self) -> float:
@@ -149,7 +158,7 @@ class AlertManager:
         """Called when alert is triggered."""
         LOGGER.info("🚨 ALERT TRIGGERED - Starting recording/screenshot")
         if self.config.screenshot_on_peak:
-            self._capture_screenshot()
+            threading.Thread(target=self._capture_screenshot, daemon=True).start()
         self._start_recording()
 
     def _handle_cooldown(self) -> None:
@@ -163,11 +172,7 @@ class AlertManager:
 
     def _capture_screenshot(self) -> None:
         """Capture screenshot from video stream via FFmpeg."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = self.config.screenshots_dir / f"{timestamp}.jpg"
-
-        # Ensure directory exists
-        self.config.screenshots_dir.mkdir(parents=True, exist_ok=True)
+        output_path = self.config.screenshots_dir / f"{_timestamp_filename()}.jpg"
 
         try:
             subprocess.run(
@@ -186,7 +191,8 @@ class AlertManager:
                 ],
                 timeout=10,
                 check=True,
-                capture_output=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             LOGGER.info(f"Screenshot saved: {output_path}")
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -199,11 +205,7 @@ class AlertManager:
                 LOGGER.warning("Recording already in progress, ignoring start request")
                 return
 
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = self.config.clips_dir / f"{timestamp}.mp4"
-
-            # Ensure directory exists
-            self.config.clips_dir.mkdir(parents=True, exist_ok=True)
+            output_path = self.config.clips_dir / f"{_timestamp_filename()}.mp4"
 
             try:
                 self._recording_process = subprocess.Popen(
