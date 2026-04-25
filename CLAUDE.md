@@ -82,6 +82,22 @@ USB Cam → go2rtc ← overlay pipe ← OverlayGenerator ← MotionDetector
 - In Docker Compose mode, `bbwatch` reads audio from the RTSP stream (`BBWATCH_AUDIO__DEVICE_INDEX=rtsp://go2rtc:8554/babycam`) rather than a local ALSA device. Motion detection uses the `raw_video` variant of that URL to avoid consuming the overlaid stream.
 - `fake_hardware=True` (CLI flag `--fake-hardware`) bypasses all device detection — useful for unit tests and environments without hardware.
 
+### Raspberry Pi Camera Integration (RPi5)
+
+bbwatch supports native Raspberry Pi Camera Module 3 on RPi5 via libcamera (not deprecated V4L2 compat):
+
+**Device Detection Flow:**
+1. `detect_picamera_devices()` runs `libcamera-hello --list-cameras` and parses output like `0 : imx708 [4608x2592]`
+2. Creates `VideoDevice(path="rpicam:0", name="Pi Camera 0 (imx708)")`
+3. `get_preferred_video_device()` ranks: `rpicam:N` > `/dev/video0` > first device
+4. When rpicam is selected, `main.py` (line 122–124) rewrites the path: `"rpicam:0"` → `"rtsp://localhost:8554/raw_video"`
+
+**Why RTSP restream?** OpenCV cannot open `rpicam:N` directly — go2rtc holds the camera hardware lock and re-exposes the stream via RTSP. The MotionDetector consumes this RTSP restream, not the raw rpicam device.
+
+**Testing without hardware:** Use `--fake-hardware` flag to bypass device detection on non-RPi hosts.
+
+**Deployment:** See [docs/SETUP_RPI5.md](docs/SETUP_RPI5.md) for full walkthrough (system packages, libcamera verification, Docker build, stream access).
+
 ### Test structure
 
 ```
