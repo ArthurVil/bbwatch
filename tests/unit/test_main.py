@@ -64,8 +64,7 @@ def test_detect_hardware_fake(monitor):
     assert monitor._detect_hardware() is True
     assert monitor._audio_source is not None
     assert monitor._video_source is not None
-    # With fake_hardware=True, we get fake ALSA/V4L2 devices from HardwareDetector
-    assert "ALSA" in repr(monitor._audio_source) or "Mock" in repr(monitor._audio_source)
+    assert "Mock" in repr(monitor._audio_source)
 
 
 def test_detect_hardware_network(monitor):
