@@ -4,43 +4,13 @@ Discovers available audio (ALSA) and video (V4L2, Pi Camera) devices on the syst
 """
 
 import logging
-import re
 import subprocess
-from dataclasses import dataclass
+
+from bbwatch.hardware import _AUDIO_DEVICE_PATTERN, _PICAMERA_PATTERN, AudioDevice, VideoDevice
 
 LOGGER = logging.getLogger(__name__)
 
-# Compiled regex patterns for device parsing
-_AUDIO_DEVICE_PATTERN = re.compile(r"card (\d+):.*\[(.+?)\].*device (\d+):")
-_PICAMERA_PATTERN = re.compile(r"(\d+)\s*:\s*(.+?)\s*\[")
-
-
-@dataclass
-class AudioDevice:
-    """Detected ALSA audio capture device."""
-
-    card: int
-    device: int
-    name: str
-
-    @property
-    def alsa_id(self) -> str:
-        """ALSA device identifier (e.g., 'hw:1,0')."""
-        return f"hw:{self.card},{self.device}"
-
-    def __repr__(self) -> str:
-        return f"AudioDevice(card={self.card}, device={self.device}, name={self.name!r})"
-
-
-@dataclass
-class VideoDevice:
-    """Detected video capture device (V4L2 or Pi Camera)."""
-
-    path: str
-    name: str
-
-    def __repr__(self) -> str:
-        return f"VideoDevice(path={self.path!r}, name={self.name!r})"
+__all__ = ["AudioDevice", "VideoDevice", "HardwareDetector"]
 
 
 class HardwareDetector:

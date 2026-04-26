@@ -2,6 +2,7 @@
 
 import json
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -67,17 +68,16 @@ class TestAlertManager:
 
     def test_cooldown_logic(self, manager):
         """Should return to IDLE after cooldown."""
-        # Enter cooldown
-        manager.process_intensity(0.12)  # Trigger
-        manager.process_intensity(0.04)  # Cooldown
-        assert manager.current_state == AlertState.COOLDOWN
+        with patch("bbwatch.alert.time.time") as mock_time:
+            mock_time.return_value = 0.0
+            manager.process_intensity(0.12)  # Trigger
+            manager.process_intensity(0.04)  # Cooldown
+            assert manager.current_state == AlertState.COOLDOWN
 
-        # Wait for cooldown
-        time.sleep(1.1)
-
-        # Process low intensity -> IDLE
-        manager.process_intensity(0.02)
-        assert manager.current_state == AlertState.IDLE
+            # Advance clock past cooldown_s=1.0
+            mock_time.return_value = 2.0
+            manager.process_intensity(0.02)
+            assert manager.current_state == AlertState.IDLE
 
     def test_retrigger_during_cooldown(self, manager):
         """Should re-trigger immediately if high intensity occurs during cooldown."""
@@ -110,10 +110,12 @@ class TestAlertManager:
 
     def test_recording_stops_on_idle(self, manager, recorder):
         """Recording should stop when alert returns to idle."""
-        manager.process_intensity(0.12)  # trigger
-        manager.process_intensity(0.04)  # cooldown
-        time.sleep(1.1)
-        manager.process_intensity(0.02)  # idle
+        with patch("bbwatch.alert.time.time") as mock_time:
+            mock_time.return_value = 0.0
+            manager.process_intensity(0.12)  # trigger
+            manager.process_intensity(0.04)  # cooldown
+            mock_time.return_value = 2.0
+            manager.process_intensity(0.02)  # idle
 
         assert recorder.stop_recording_calls == 1
 
