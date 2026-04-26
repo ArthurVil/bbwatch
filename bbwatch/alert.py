@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 
 from bbwatch.config import AlertConfig
+from bbwatch.recording import FFmpegRecorder, Recorder
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,19 +46,19 @@ class AlertStatus:
 class AlertManager:
     """Manages alert state transitions and side effects."""
 
-    def __init__(self, config: AlertConfig):
+    def __init__(self, config: AlertConfig, recorder: Recorder | None = None):
         """Initialize alert manager.
 
         Args:
             config: Alert configuration.
+            recorder: Video recorder; defaults to FFmpegRecorder using config.stream_url.
         """
         self.config = config
         self._state = AlertState.IDLE
         self._last_trigger_time = 0.0
         self._cooldown_start_time = 0.0
         self._current_intensity = 0.0
-        self._recording_process: subprocess.Popen | None = None
-        self._recording_lock = threading.Lock()
+        self._recorder: Recorder = recorder if recorder is not None else FFmpegRecorder(config.stream_url)
 
         # Pre-create output directories
         self.config.screenshots_dir.mkdir(parents=True, exist_ok=True)
@@ -151,15 +152,22 @@ class AlertManager:
         except OSError as e:
             LOGGER.error(f"Failed to write status file: {e}")
 
-    # Side effects (Recording / Screenshots)
-    # These are placeholders for now to be filled in with actual FFmpeg calls
-
     def _handle_trigger(self, intensity: float) -> None:
         """Called when alert is triggered."""
         LOGGER.info("🚨 ALERT TRIGGERED - Starting recording/screenshot")
+
         if self.config.screenshot_on_peak:
-            threading.Thread(target=self._capture_screenshot, daemon=True).start()
-        self._start_recording()
+            threading.Thread(target=self._take_screenshot, daemon=True).start()
+
+        if not self._recorder.is_recording():
+            output_path = self.config.clips_dir / f"{_timestamp_filename()}.mp4"
+            try:
+                self._recorder.start_recording(output_path, self.config.record_clip_s)
+                LOGGER.info(f"Recording started: {output_path.name}")
+            except RuntimeError:
+                LOGGER.warning("Recording already in progress")
+            except FileNotFoundError as e:
+                LOGGER.error(f"Recording failed (ffmpeg not found): {e}")
 
     def _handle_cooldown(self) -> None:
         """Called when alert enters cooldown (intensity drops)."""
@@ -167,82 +175,13 @@ class AlertManager:
 
     def _handle_idle(self) -> None:
         """Called when alert clears completely."""
-        LOGGER.info("Alert cleared - saving recording")
-        self._stop_recording()
+        LOGGER.info("Alert cleared - stopping recording")
+        self._recorder.stop_recording()
 
-    def _capture_screenshot(self) -> None:
-        """Capture screenshot from video stream via FFmpeg."""
+    def _take_screenshot(self) -> None:
         output_path = self.config.screenshots_dir / f"{_timestamp_filename()}.jpg"
-
         try:
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-rtsp_transport",
-                    "tcp",
-                    "-i",
-                    self.config.stream_url,
-                    "-vframes",
-                    "1",
-                    "-q:v",
-                    "5",
-                    str(output_path),
-                ],
-                timeout=10,
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            LOGGER.info(f"Screenshot saved: {output_path}")
+            self._recorder.capture_frame(output_path)
+            LOGGER.info(f"Screenshot saved: {output_path.name}")
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
-            LOGGER.error(f"Failed to capture screenshot: {e}")
-
-    def _start_recording(self) -> None:
-        """Start video recording via FFmpeg in background thread."""
-        with self._recording_lock:
-            if self._recording_process is not None:
-                LOGGER.warning("Recording already in progress, ignoring start request")
-                return
-
-            output_path = self.config.clips_dir / f"{_timestamp_filename()}.mp4"
-
-            try:
-                self._recording_process = subprocess.Popen(
-                    [
-                        "ffmpeg",
-                        "-y",
-                        "-rtsp_transport",
-                        "tcp",
-                        "-i",
-                        self.config.stream_url,
-                        "-t",
-                        str(int(self.config.record_clip_s)),
-                        "-c",
-                        "copy",
-                        str(output_path),
-                    ],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                LOGGER.info(f"Recording started: {output_path}")
-            except FileNotFoundError as e:
-                LOGGER.error(f"Failed to start recording (ffmpeg not found): {e}")
-                self._recording_process = None
-
-    def _stop_recording(self) -> None:
-        """Stop video recording gracefully."""
-        with self._recording_lock:
-            if self._recording_process is None:
-                return
-
-            try:
-                self._recording_process.terminate()
-                self._recording_process.wait(timeout=5)
-                LOGGER.info("Recording stopped")
-            except subprocess.TimeoutExpired:
-                LOGGER.warning("Recording process did not terminate in time, killing")
-                self._recording_process.kill()
-                self._recording_process.wait()
-            finally:
-                self._recording_process = None
+            LOGGER.error(f"Screenshot failed: {type(e).__name__}: {e}")
