@@ -121,6 +121,9 @@ class BabyMonitor:
 
     def _discover_audio_sources(self, detector: HardwareDetector) -> list[AudioSource]:
         """Build list of potential audio sources, in priority order."""
+        if self.config.fake_hardware:
+            return [MockAudioSource("Audio")]
+
         sources: list[AudioSource] = []
 
         # Option 1: Docker network RTSP (highest priority in Docker mode)
@@ -131,7 +134,7 @@ class BabyMonitor:
         for device in detector.detect_audio_devices():
             sources.append(ALSASource(device.alsa_id))
 
-        # Option 3: Fallback mock (for testing)
+        # Option 3: Fallback mock when no hardware found
         if not sources:
             sources.append(MockAudioSource("Audio"))
 
@@ -139,6 +142,9 @@ class BabyMonitor:
 
     def _discover_video_sources(self, detector: HardwareDetector) -> list[VideoSource]:
         """Build list of potential video sources, in priority order."""
+        if self.config.fake_hardware:
+            return [MockVideoSource("Video")]
+
         sources: list[VideoSource] = []
 
         # Option 1: Pi Camera via RTSP restream (go2rtc holds the hardware lock)
@@ -154,7 +160,7 @@ class BabyMonitor:
         if isinstance(self.config.audio.device_index, str) and self.config.audio.device_index.startswith("rtsp://"):
             sources.append(RTSPVideoSource("rtsp://localhost:8554/raw_video"))
 
-        # Option 4: Fallback mock (for testing)
+        # Option 4: Fallback mock when no hardware found
         if not sources:
             sources.append(MockVideoSource("Video"))
 
