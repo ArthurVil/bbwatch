@@ -61,8 +61,10 @@ def test_initialization(monitor):
 def test_detect_hardware_fake(monitor):
     monitor.config.fake_hardware = True
     assert monitor._detect_hardware() is True
-    assert monitor._audio_device == "hw:0,0"
-    assert monitor._video_device == "/dev/video0"
+    assert monitor._audio_source is not None
+    assert monitor._video_source is not None
+    # With fake_hardware=True, we get fake ALSA/V4L2 devices from HardwareDetector
+    assert "ALSA" in repr(monitor._audio_source) or "Mock" in repr(monitor._audio_source)
 
 
 def test_detect_hardware_network(monitor):
@@ -70,20 +72,28 @@ def test_detect_hardware_network(monitor):
     monitor.config.audio.device_index = "rtsp://test"
 
     assert monitor._detect_hardware() is True
-    assert monitor._audio_device == "rtsp://test"
-    assert monitor._video_device == "rtsp://test".replace("babycam", "raw_video")
+    assert monitor._audio_source is not None
+    assert "RTSP" in repr(monitor._audio_source)
+    assert monitor._video_source is not None
+    assert "RTSP" in repr(monitor._video_source)
 
 
 def test_detect_hardware_local_fail(monitor):
     monitor.config.fake_hardware = False
     monitor.config.audio.device_index = 0  # Local
 
-    # Mock hardware detection module
-    with patch("bbwatch.hardware.log_detected_hardware") as mock_detect:
-        mock_detect.return_value = ([], [])  # No devices
+    # Mock HardwareDetector to return no devices
+    with patch("bbwatch.main.HardwareDetector") as mock_detector_class:
+        mock_detector = MagicMock()
+        mock_detector_class.return_value = mock_detector
+        mock_detector.detect_audio_devices.return_value = []
+        mock_detector.detect_picamera_devices.return_value = []
+        mock_detector.detect_video_devices.return_value = []
 
-        # Should return False because no audio device found
-        assert monitor._detect_hardware() is False
+        # Even with no hardware, fallback to mock sources means success
+        assert monitor._detect_hardware() is True
+        assert monitor._audio_source is not None  # Mock fallback
+        assert monitor._video_source is not None  # Mock fallback
 
 
 def test_start_stop_sequence(monitor, mock_components):

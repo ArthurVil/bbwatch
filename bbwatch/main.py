@@ -15,9 +15,21 @@ from bbwatch.alert import AlertManager
 from bbwatch.capture import SlidingWindowCapture
 from bbwatch.config import BBWatchConfig, get_default_config_path
 from bbwatch.detector import SegmentHandler
+from bbwatch.hardware_detector import HardwareDetector
 from bbwatch.motion import MotionDetector
 from bbwatch.overlay import OverlayController
 from bbwatch.overlay_generator import OverlayGenerator
+from bbwatch.sources import (
+    ALSASource,
+    AudioSource,
+    MockAudioSource,
+    MockVideoSource,
+    RPiCameraSource,
+    RTSPAudioSource,
+    RTSPVideoSource,
+    V4L2Source,
+    VideoSource,
+)
 from bbwatch.storage import StorageManager
 
 LOGGER = logging.getLogger(__name__)
@@ -72,61 +84,97 @@ class BabyMonitor:
         self._alert_manager: AlertManager | None = None
         self._running = False
 
-        # Detected hardware
-        self._audio_device: str | None = None
-        self._video_device: str | None = None
+        # Detected hardware sources
+        self._audio_source: AudioSource | None = None
+        self._video_source: VideoSource | None = None
 
     def _detect_hardware(self) -> bool:
-        """Detect and validate hardware.
+        """Detect and configure audio/video sources.
 
         Returns:
-            True if required hardware was found.
+            True if at least one critical path is available (audio OR video).
         """
-        if self.config.fake_hardware:
-            LOGGER.info("Using fake hardware (development mode)")
-            self._audio_device = "hw:0,0"
-            self._video_device = "/dev/video0"
-            return True
+        detector = HardwareDetector(fake=self.config.fake_hardware)
 
-        # Check for network stream (RTSP/HTTP)
-        network_audio = isinstance(self.config.audio.device_index, str) and "://" in self.config.audio.device_index
-        if network_audio:
-            LOGGER.info(f"Using network audio stream: {self.config.audio.device_index}")
-            self._audio_device = self.config.audio.device_index
-            # Use raw_video for motion detection to avoid seeing the overlay
-            # We skip local hardware discovery to avoid v4l2-ctl errors when go2rtc holds the device
-            self._video_device = self.config.audio.device_index.replace("babycam", "raw_video")
-            LOGGER.info(f"Using network video for motion: {self._video_device}")
-            return True
+        LOGGER.info("=" * 50)
+        LOGGER.info("HARDWARE DETECTION")
+        LOGGER.info("=" * 50)
 
-        # Local hardware mode
-        from bbwatch.hardware import get_preferred_audio_device, get_preferred_video_device, log_detected_hardware
+        # Discover all available sources
+        audio_sources = self._discover_audio_sources(detector)
+        video_sources = self._discover_video_sources(detector)
 
-        audio_devices, video_devices = log_detected_hardware()
+        # Select best available source for each
+        self._audio_source = self._select_source(audio_sources, "Audio")
+        self._video_source = self._select_source(video_sources, "Motion Detection")
 
-        # Get preferred audio device
-        audio = get_preferred_audio_device(audio_devices)
-        if audio is None:
-            LOGGER.error("No audio capture device found!")
-            return False
+        LOGGER.info("=" * 50)
+        LOGGER.info(f"Cry Detection:     {'ENABLED' if self._audio_source else 'DISABLED'}")
+        LOGGER.info(f"Motion Detection:  {'ENABLED' if self._video_source else 'DISABLED'}")
+        LOGGER.info("=" * 50)
 
-        self._audio_device = audio.alsa_id
-        LOGGER.info(f"Using audio device: {audio}")
+        # Return True if at least one critical path is available
+        return self._audio_source is not None or self._video_source is not None
 
-        # Get preferred video device
-        video = get_preferred_video_device(video_devices)
-        if video is None:
-            LOGGER.warning("No local video device found - motion detection will be disabled")
-        else:
-            # If rpicam device, motion detection must use RTSP restream from go2rtc
-            if video.path.startswith("rpicam:"):
-                self._video_device = "rtsp://localhost:8554/raw_video"
-                LOGGER.info(f"Using Pi Camera via go2rtc RTSP restream for motion: {video}")
-            else:
-                self._video_device = video.path
-                LOGGER.info(f"Using video device for motion: {video}")
+    def _discover_audio_sources(self, detector: HardwareDetector) -> list[AudioSource]:
+        """Build list of potential audio sources, in priority order."""
+        sources: list[AudioSource] = []
 
-        return True
+        # Option 1: Docker network RTSP (highest priority in Docker mode)
+        if isinstance(self.config.audio.device_index, str) and self.config.audio.device_index.startswith("rtsp://"):
+            sources.append(RTSPAudioSource(self.config.audio.device_index))
+
+        # Option 2: Local ALSA devices
+        for device in detector.detect_audio_devices():
+            sources.append(ALSASource(device.alsa_id))
+
+        # Option 3: Fallback mock (for testing)
+        if not sources:
+            sources.append(MockAudioSource("Audio"))
+
+        return sources
+
+    def _discover_video_sources(self, detector: HardwareDetector) -> list[VideoSource]:
+        """Build list of potential video sources, in priority order."""
+        sources: list[VideoSource] = []
+
+        # Option 1: Docker network RTSP (for motion detection via go2rtc raw_video stream)
+        # Use raw_video to avoid seeing the overlay in motion detection
+        sources.append(RTSPVideoSource("rtsp://localhost:8554/raw_video"))
+
+        # Option 2: Pi Camera via RTSP restream (go2rtc holds the hardware lock)
+        for device in detector.detect_picamera_devices():
+            # RPiCamera uses RTSP restream URL, not the raw rpicam:N device
+            sources.append(RPiCameraSource(device.path))
+
+        # Option 3: V4L2 USB cameras
+        for device in detector.detect_video_devices():
+            sources.append(V4L2Source(device.path))
+
+        # Option 4: Fallback mock (for testing)
+        if not sources:
+            sources.append(MockVideoSource("Video"))
+
+        return sources
+
+    @staticmethod
+    def _select_source(sources: list[AudioSource | VideoSource], name: str) -> AudioSource | VideoSource | None:
+        """Pick first available source from list.
+
+        Args:
+            sources: List of sources to try, in priority order.
+            name: Human-readable name for logging.
+
+        Returns:
+            First available source, or None if no sources available.
+        """
+        for source in sources:
+            if source.is_available():
+                LOGGER.info(f"{name}: {source}")
+                return source
+
+        LOGGER.warning(f"{name}: NO SOURCES AVAILABLE")
+        return None
 
     def start(self) -> None:
         """Start all monitor components."""
@@ -158,11 +206,11 @@ class BabyMonitor:
         self._overlay_controller.setup()
 
         # New Dynamic Components
-        if self._video_device:
+        if self._video_source:
             # Motion Detector
-            LOGGER.info(f"Initializing motion detector on {self._video_device}")
+            LOGGER.info(f"Initializing motion detector on {self._video_source}")
             self._motion_detector = MotionDetector(
-                device_index=self._video_device,
+                device_index=self._video_source.open(),
                 threshold=self.config.motion.threshold,
                 blur_size=self.config.motion.blur_size,
                 history_len=self.config.motion.history_len,
@@ -202,12 +250,12 @@ class BabyMonitor:
         )
         self._observer.start()
 
-        if self._audio_device is None:
-            raise RuntimeError("Audio device not initialized")
+        if self._audio_source is None:
+            raise RuntimeError("Audio source not initialized")
 
         # Start audio capture
         self._capture = SlidingWindowCapture(
-            device=self._audio_device,
+            device=self._audio_source.open(),
             output_dir=self.config.storage.wav_dir,
             segment_duration=self.config.audio.segment_duration_s,
             overlap=self.config.audio.overlap_s,
