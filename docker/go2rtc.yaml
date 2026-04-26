@@ -23,6 +23,8 @@ streams:
 
 api:
   listen: ":1984"
+  username: "${GO2RTC_USERNAME}"
+  password: "${GO2RTC_PASSWORD}"
 
 rtsp:
   listen: ":8554"

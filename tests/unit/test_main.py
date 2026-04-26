@@ -48,6 +48,7 @@ def monitor(mock_components, tmp_path):
         config_inst.log_level = "INFO"
         config_inst.fake_hardware = True  # Default to fake hardware to bypass detection logic complexities
         config_inst.motion.motion_threshold_percent = 5.0  # Float value for comparisons
+        config_inst.watchdog.enabled = False
 
         mon = BabyMonitor(config_path=Path("dummy.yaml"))
         return mon

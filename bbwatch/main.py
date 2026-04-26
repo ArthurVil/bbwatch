@@ -17,6 +17,7 @@ from bbwatch.config import BBWatchConfig, get_default_config_path
 from bbwatch.detector import SegmentHandler
 from bbwatch.hardware_detector import HardwareDetector
 from bbwatch.motion import MotionDetector
+from bbwatch.notifier import make_notifier
 from bbwatch.overlay import OverlayController
 from bbwatch.overlay_generator import OverlayGenerator
 from bbwatch.sources import (
@@ -31,6 +32,7 @@ from bbwatch.sources import (
     VideoSource,
 )
 from bbwatch.storage import StorageManager
+from bbwatch.watchdog import StreamWatchdog
 
 LOGGER = logging.getLogger(__name__)
 
@@ -82,6 +84,7 @@ class BabyMonitor:
         self._overlay_generator: OverlayGenerator | None = None
         self._motion_detector: MotionDetector | None = None
         self._alert_manager: AlertManager | None = None
+        self._watchdog: StreamWatchdog | None = None
         self._running = False
 
         # Detected hardware sources
@@ -264,12 +267,20 @@ class BabyMonitor:
         )
         self._capture.start()
 
+        if self.config.watchdog.enabled:
+            self._watchdog = StreamWatchdog(self.config.watchdog, make_notifier(self.config.watchdog))
+            self._watchdog.start()
+
         self._running = True
         LOGGER.info("Baby monitor started successfully")
 
     def stop(self) -> None:
         """Stop all monitor components gracefully."""
         LOGGER.info("Stopping baby monitor...")
+
+        if self._watchdog:
+            self._watchdog.stop()
+            self._watchdog = None
 
         if self._overlay_generator:
             LOGGER.info("Stopping overlay generator...")

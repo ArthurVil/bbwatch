@@ -1,5 +1,6 @@
 """Configuration management for bbwatch using Pydantic."""
 
+import enum
 import logging
 from pathlib import Path
 
@@ -134,6 +135,29 @@ class MotionConfig(BaseModel):
         return v
 
 
+class NotifierType(str, enum.Enum):
+    """Push notification backend."""
+
+    NTFY = "ntfy"
+    WEBHOOK = "webhook"
+    NONE = "none"
+
+
+class WatchdogConfig(BaseModel):
+    """Viewer connectivity watchdog — alerts when stream consumers drop to zero."""
+
+    enabled: bool = Field(default=False)
+    go2rtc_api_url: str = Field(default="http://go2rtc:1984")
+    go2rtc_username: str = Field(default="")
+    go2rtc_password: str = Field(default="")
+    stream_name: str = Field(default="babycam")
+    poll_interval_s: float = Field(default=10.0, ge=1.0, le=300.0)
+    notifier: NotifierType = Field(default=NotifierType.NONE)
+    ntfy_url: str = Field(default="")
+    webhook_url: str = Field(default="")
+    alert_message: str = Field(default="bbwatch: viewer disconnected from stream")
+
+
 class BBWatchConfig(BaseSettings):
     """Main configuration for bbwatch."""
 
@@ -149,6 +173,7 @@ class BBWatchConfig(BaseSettings):
     alerts: AlertConfig = Field(default_factory=AlertConfig)
     motion: MotionConfig = Field(default_factory=MotionConfig)
     host: HostConfig = Field(default_factory=HostConfig)
+    watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)
 
     # Runtime options
     log_level: str = Field(default="INFO")

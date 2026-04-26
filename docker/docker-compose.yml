@@ -74,13 +74,15 @@ services:
       - PULSE_SERVER=unix:/run/user/1000/pulse/native
       - PULSE_COOKIE=/root/.config/pulse/cookie
       - HOST_AUDIO_SOURCE=${HOST_AUDIO_SOURCE}
+      - GO2RTC_USERNAME=${GO2RTC_USERNAME}
+      - GO2RTC_PASSWORD=${GO2RTC_PASSWORD}
     devices:
       - /dev/media0:/dev/media0
       - /dev/video0:/dev/video0
       - /dev/snd:/dev/snd
     ports:
-      - "1984:1984"
-      - "8554:8554"
+      - "${BBWATCH_BIND_IP:-0.0.0.0}:1984:1984"
+      - "${BBWATCH_BIND_IP:-0.0.0.0}:8554:8554"
     group_add:
       - video
       - audio
