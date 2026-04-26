@@ -138,18 +138,18 @@ class BabyMonitor:
         """Build list of potential video sources, in priority order."""
         sources: list[VideoSource] = []
 
-        # Option 1: Docker network RTSP (for motion detection via go2rtc raw_video stream)
-        # Use raw_video to avoid seeing the overlay in motion detection
-        sources.append(RTSPVideoSource("rtsp://localhost:8554/raw_video"))
-
-        # Option 2: Pi Camera via RTSP restream (go2rtc holds the hardware lock)
+        # Option 1: Pi Camera via RTSP restream (go2rtc holds the hardware lock)
         for device in detector.detect_picamera_devices():
-            # RPiCamera uses RTSP restream URL, not the raw rpicam:N device
             sources.append(RPiCameraSource(device.path))
 
-        # Option 3: V4L2 USB cameras
+        # Option 2: V4L2 USB cameras
         for device in detector.detect_video_devices():
             sources.append(V4L2Source(device.path))
+
+        # Option 3: Docker network RTSP — only when audio is already RTSP (Docker mode)
+        # Avoids unconditionally selecting an unreachable localhost stream on bare-metal hosts
+        if isinstance(self.config.audio.device_index, str) and self.config.audio.device_index.startswith("rtsp://"):
+            sources.append(RTSPVideoSource("rtsp://localhost:8554/raw_video"))
 
         # Option 4: Fallback mock (for testing)
         if not sources:
@@ -351,16 +351,6 @@ class BabyMonitor:
             LOGGER.info("Received interrupt signal")
         finally:
             self.stop()
-
-    def _check_directories(self) -> None:
-        """Verify and recreate directories if needed."""
-        if not self.config.storage.wav_dir.exists():
-            LOGGER.warning("wav_dir missing, recreating")
-            self.config.storage.wav_dir.mkdir(parents=True, exist_ok=True)
-
-        if not self.config.alerts.overlay_dir.exists():
-            LOGGER.warning("overlay_dir missing, recreating")
-            self.config.alerts.overlay_dir.mkdir(parents=True, exist_ok=True)
 
 
 def parse_args() -> argparse.Namespace:

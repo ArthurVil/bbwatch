@@ -183,7 +183,7 @@ class HardwareDetector:
 
             # Device path lines: indented and contain /dev/video
             elif "/dev/video" in line_stripped:
-                devices.append(VideoDevice(path=line_stripped, name=current_name))
+                devices.append(VideoDevice(path=line_stripped.strip(), name=current_name))
 
         return devices
 

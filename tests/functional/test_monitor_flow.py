@@ -133,7 +133,9 @@ motion:
         config_path.write_text(f"data_dir: {tmp_path}\nfake_hardware: false")
 
         # Mock HardwareDetector to return no real devices
-        with patch("bbwatch.main.HardwareDetector") as mock_detector_class:
+        with patch("bbwatch.main.HardwareDetector") as mock_detector_class, \
+             patch("bbwatch.main.OverlayGenerator"), \
+             patch("bbwatch.main.MotionDetector"):
             mock_detector = MagicMock()
             mock_detector_class.return_value = mock_detector
             mock_detector.detect_audio_devices.return_value = []

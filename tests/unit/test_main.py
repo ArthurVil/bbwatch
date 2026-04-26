@@ -71,11 +71,19 @@ def test_detect_hardware_network(monitor):
     monitor.config.fake_hardware = False
     monitor.config.audio.device_index = "rtsp://test"
 
-    assert monitor._detect_hardware() is True
-    assert monitor._audio_source is not None
-    assert "RTSP" in repr(monitor._audio_source)
-    assert monitor._video_source is not None
-    assert "RTSP" in repr(monitor._video_source)
+    with patch("bbwatch.main.HardwareDetector") as mock_detector_class:
+        mock_detector = MagicMock()
+        mock_detector_class.return_value = mock_detector
+        mock_detector.detect_audio_devices.return_value = []
+        mock_detector.detect_picamera_devices.return_value = []
+        mock_detector.detect_video_devices.return_value = []
+
+        assert monitor._detect_hardware() is True
+        assert monitor._audio_source is not None
+        assert "RTSP" in repr(monitor._audio_source)
+        # In RTSP/Docker mode the video source is also RTSP
+        assert monitor._video_source is not None
+        assert "RTSP" in repr(monitor._video_source)
 
 
 def test_detect_hardware_local_fail(monitor):
