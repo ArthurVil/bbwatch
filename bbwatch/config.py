@@ -237,6 +237,12 @@ class BBWatchConfig(BaseSettings):
                         "overlay_dir": base / self.alerts.overlay_dir
                         if not self.alerts.overlay_dir.is_absolute()
                         else self.alerts.overlay_dir,
+                        "clips_dir": base / self.alerts.clips_dir
+                        if not self.alerts.clips_dir.is_absolute()
+                        else self.alerts.clips_dir,
+                        "screenshots_dir": base / self.alerts.screenshots_dir
+                        if not self.alerts.screenshots_dir.is_absolute()
+                        else self.alerts.screenshots_dir,
                     }
                 ),
             }

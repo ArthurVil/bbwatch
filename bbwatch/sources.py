@@ -47,7 +47,7 @@ class VideoSource(Protocol):
         ...
 
     def __repr__(self) -> str:
-        """User-friendly identifier: 'ALSA(hw:1,0)', 'RTSP(babycam)', etc."""
+        """User-friendly identifier: 'V4L2(/dev/video0)', 'RTSP(raw_video)', etc."""
         ...
 
 
@@ -69,7 +69,7 @@ class ALSASource:
 
     def open(self) -> Any:
         """Return FFmpeg command for ALSA input."""
-        return f"hw:{self.device_id}"
+        return self.device_id
 
     def close(self) -> None:
         """No cleanup needed for ALSA sources."""

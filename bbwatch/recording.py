@@ -51,7 +51,7 @@ class FFmpegRecorder:
         self._process: subprocess.Popen | None = None
 
     def capture_frame(self, output_path: Path) -> None:
-        subprocess.run(
+        proc = subprocess.Popen(
             [
                 "ffmpeg", "-y",
                 "-rtsp_transport", "tcp",
@@ -60,15 +60,22 @@ class FFmpegRecorder:
                 "-q:v", "5",
                 str(output_path),
             ],
-            timeout=10,
-            check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, "ffmpeg")
 
     def start_recording(self, output_path: Path, duration_sec: float) -> None:
-        if self._process is not None:
+        if self._process is not None and self._process.poll() is None:
             raise RuntimeError("Already recording")
+        self._process = None  # reap naturally-completed process before starting new one
 
         self._process = subprocess.Popen(
             [
