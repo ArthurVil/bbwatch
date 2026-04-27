@@ -5,6 +5,8 @@ and visualization plots, writing directly to a named pipe for FFmpeg.
 """
 
 import logging
+import os
+import select
 import threading
 import time
 from collections import deque
@@ -26,6 +28,7 @@ class OverlayState(NamedTuple):
     audio_alert: bool
     motion_level: float
     audio_level: float
+    latency_ms: float | None = None
 
 
 class OverlayGenerator:
@@ -94,13 +97,18 @@ class OverlayGenerator:
         self.ax.axis("off")  # Hide axes
         self.fig.tight_layout(pad=0)
 
-    def update_state(self, motion_detected: bool, audio_alert: bool, motion_level: float, audio_level: float) -> None:
+    def update_state(
+        self,
+        motion_detected: bool,
+        audio_alert: bool,
+        motion_level: float,
+        audio_level: float,
+        latency_ms: float | None = None,
+    ) -> None:
         """Update current system state thread-safely."""
         with self._lock:
-            self._state = OverlayState(motion_detected, audio_alert, motion_level, audio_level)
+            self._state = OverlayState(motion_detected, audio_alert, motion_level, audio_level, latency_ms)
             self.motion_history.append(motion_level)
-            # Audio level is typically small (<0.1), scale for visualization relative to motion (0-100)
-            # Assume max audio ~0.1 -> 100
             self.audio_history.append(min(audio_level * 1000, 100))
 
     def _get_status_color(self) -> tuple[int, int, int, int]:
@@ -189,8 +197,13 @@ class OverlayGenerator:
 
         with self._lock:
             info = f"Motion: {self._state.motion_level:.1f}%  Audio: {self._state.audio_level:.3f}"
+            latency_ms = self._state.latency_ms
 
         cv2.putText(img, info, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, self.COLOR_TEXT_INFO, 1)
+
+        if latency_ms is not None:
+            latency_text = f"Detect: {latency_ms:.0f}ms"
+            cv2.putText(img, latency_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, self.COLOR_TEXT_INFO, 1)
 
         # Draw plot (OpenCV is much faster/stable for this overlay use-case than converting mpl figures)
         self._draw_plot_cv2(img)
@@ -208,8 +221,6 @@ class OverlayGenerator:
             try:
                 if self.pipe_path.exists():
                     self.pipe_path.unlink()  # Cleanup if regular file
-                import os
-
                 os.mkfifo(str(self.pipe_path))
                 self.pipe_path.chmod(0o666)
             except OSError as e:
@@ -217,44 +228,64 @@ class OverlayGenerator:
                 # Don't crash, maybe it already exists or loop will retry
 
         self.running = True
+        frame_interval = 1.0 / self.fps
         while self.running:
             try:
-                # Open pipe in binary write mode
-                LOGGER.info("Opening pipe in loop...")
-                # Use os.open for non-blocking check or just standard open?
-                # Standard open blocks until reader connects. This is good.
-                with open(self.pipe_path, "wb") as pipe:
-                    LOGGER.info("Pipe connected.")
+                LOGGER.info("Opening overlay pipe (waiting for reader)...")
+                # O_WRONLY | O_NONBLOCK: open returns immediately if no reader yet,
+                # raising OSError(ENXIO). We retry until go2rtc connects.
+                fd = -1
+                while self.running:
+                    try:
+                        fd = os.open(str(self.pipe_path), os.O_WRONLY | os.O_NONBLOCK)
+                        break
+                    except OSError:
+                        time.sleep(0.5)
 
-                    last_log = time.time()
-                    while self.running:
-                        start_time = time.time()
+                if fd == -1:
+                    continue
 
-                        try:
-                            frame_data = self.generate_frame()
-                            pipe.write(frame_data)
-                            pipe.flush()
+                LOGGER.info("Overlay pipe connected.")
+                last_log = time.time()
 
-                            # Log heartbeat every 5 seconds (25 frames at 5fps)
-                            if time.time() - last_log > 5.0:
-                                with self._lock:
-                                    LOGGER.info(f"Overlay loop alive - state: motion={self._state.motion_level:.1f}")
-                                last_log = time.time()
+                while self.running:
+                    start_time = time.time()
+                    try:
+                        frame_data = self.generate_frame()
 
-                        except BrokenPipeError:
-                            LOGGER.warning("Pipe broken (reader disconnected), reconnecting...")
-                            break  # Break inner loop, retry outer loop
-                        except Exception as inner_e:
-                            LOGGER.error(f"Error generating/writing frame: {inner_e}")
-                            time.sleep(1)  # Prevent tight error loop
+                        # Use select to check writability (non-blocking, 100ms timeout).
+                        # If the pipe buffer is full, drop this frame instead of blocking.
+                        ready, _, _ = select.select([], [fd], [], 0.1)
+                        if ready:
+                            try:
+                                os.write(fd, frame_data)
+                            except BrokenPipeError:
+                                LOGGER.warning("Pipe broken (reader disconnected), reconnecting...")
+                                break
+                            except BlockingIOError:
+                                pass  # Buffer full — drop frame
 
-                        elapsed = time.time() - start_time
-                        delay = max(0.0, (1.0 / self.fps) - elapsed)
-                        time.sleep(delay)
+                        if time.time() - last_log > 5.0:
+                            with self._lock:
+                                LOGGER.info(f"Overlay loop alive - state: motion={self._state.motion_level:.1f}")
+                            last_log = time.time()
+
+                    except Exception as inner_e:
+                        LOGGER.error(f"Error generating overlay frame: {inner_e}")
+                        time.sleep(0.5)
+
+                    elapsed = time.time() - start_time
+                    delay = max(0.0, frame_interval - elapsed)
+                    time.sleep(delay)
+
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
             except Exception as e:
                 LOGGER.error(f"Overlay loop error: {e}")
-                time.sleep(2)  # Wait before retry
+                time.sleep(2)
 
     def start(self) -> None:
         """Start the overlay thread."""

@@ -58,6 +58,7 @@ class AlertManager:
         self._last_trigger_time = 0.0
         self._cooldown_start_time = 0.0
         self._current_intensity = 0.0
+        self._last_latency_ms: float | None = None
         self._recorder: Recorder = recorder if recorder is not None else FFmpegRecorder(config.stream_url)
 
         # Pre-create output directories
@@ -79,7 +80,12 @@ class AlertManager:
         """Get current alert state."""
         return self._state
 
-    def process_intensity(self, intensity: float) -> AlertStatus:
+    @property
+    def last_latency_ms(self) -> float | None:
+        """Milliseconds between segment close and this alert update. None until first segment."""
+        return self._last_latency_ms
+
+    def process_intensity(self, intensity: float, capture_ts: float | None = None) -> AlertStatus:
         """Update state based on new intensity measurement.
 
         Implements hysteresis:
@@ -94,6 +100,8 @@ class AlertManager:
         """
         now = time.time()
         self._current_intensity = intensity
+        if capture_ts is not None:
+            self._last_latency_ms = (now - capture_ts) * 1000.0
 
         if self._state == AlertState.IDLE:
             if intensity > self.config.trigger_high:
