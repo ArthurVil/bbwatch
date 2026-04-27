@@ -27,6 +27,7 @@ alerts:
   overlay_dir: overlays
   alert_cooldown_s: 1.0
   health_timeout_s: 3.0
+  overlay_fps: 15                  # Must match -framerate in docker/go2rtc.yaml
 
 # Motion detection parameters
 motion:
@@ -35,7 +36,7 @@ motion:
   dilation_iterations: 1             # Morphology iterations to fill gaps (0-10): higher = larger motion blobs
   motion_threshold_percent: 10.0     # % of changed pixels to trigger (0.1-50): lower = more sensitive
   history_len: 10                    # Motion history buffer size (10-1000)
-  fps: 5                             # Motion detection frame rate (1-30): higher = more responsive
+  fps: 15                            # Motion detection frame rate (1-30): higher = more responsive
 
 # Runtime options
 log_level: INFO
