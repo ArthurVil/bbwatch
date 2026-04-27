@@ -345,9 +345,11 @@ class BabyMonitor:
                     # Get audio level and alert status
                     audio_level = 0.0
                     audio_alert = False
+                    latency_ms = None
                     if self._alert_manager:
                         audio_level = self._alert_manager.current_intensity
                         audio_alert = self._alert_manager.alert_active
+                        latency_ms = self._alert_manager.last_latency_ms
 
                     # Update overlay
                     self._overlay_generator.update_state(
@@ -355,6 +357,7 @@ class BabyMonitor:
                         audio_alert=audio_alert,
                         motion_level=motion_level,
                         audio_level=audio_level,
+                        latency_ms=latency_ms,
                     )
 
                 # Log periodic status
@@ -362,7 +365,7 @@ class BabyMonitor:
                     current, max_size = self._storage.get_usage()
                     # LOGGER.debug(f"Storage: {current:.1f}/{max_size:.1f} MB ({current / max_size * 100:.1f}%)")
 
-                time.sleep(0.1)  # Main loop tick (10Hz for responsive overlay updates)
+                time.sleep(0.05)  # 20Hz — responsive overlay state updates
 
         except KeyboardInterrupt:
             LOGGER.info("Received interrupt signal")

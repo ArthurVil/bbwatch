@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -90,29 +90,26 @@ def test_status_color_logic(overlay_generator):
 
 
 def test_run_loop_writes_to_pipe(overlay_generator, mock_cv2):
-    # Setup mock open
-    m_open = mock_open()
+    """run_loop calls os.write() with frame bytes when the pipe is writable."""
+    fake_fd = 42
+    mock_cv2.cvtColor.return_value = MagicMock(tobytes=lambda: b"data")
 
-    # We need to simulate the loop running once
-    overlay_generator.running = True
+    written = []
 
-    # Patch OPEN in the module
-    with patch("bbwatch.overlay_generator.open", m_open):
-        with patch("os.mkfifo"):
-            # Patch pathlib.Path.exists correctly
-            with patch("pathlib.Path.exists", return_value=False):
-                with patch("time.sleep"):
-                    mock_cv2.cvtColor.return_value = MagicMock(tobytes=lambda: b"data")
+    def fake_os_write(fd, data):
+        written.append((fd, data))
+        overlay_generator.running = False  # stop after first write
 
-                    # Let's use a side effect on write() to stop
-                    m_file = m_open.return_value
+    with (
+        patch("os.open", return_value=fake_fd),
+        patch("os.write", side_effect=fake_os_write),
+        patch("os.close"),
+        patch("os.mkfifo"),
+        patch("pathlib.Path.exists", return_value=False),
+        patch("select.select", return_value=([fake_fd], [fake_fd], [])),
+        patch("time.sleep"),
+    ):
+        overlay_generator.run_loop()
 
-                    def write_effect(data):
-                        overlay_generator.running = False
-
-                    m_file.__enter__.return_value.write.side_effect = write_effect
-
-                    overlay_generator.run_loop()
-
-                    # Verify write called
-                    m_file.__enter__.return_value.write.assert_called_with(b"data")
+    assert len(written) == 1
+    assert written[0] == (fake_fd, b"data")

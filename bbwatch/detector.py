@@ -5,6 +5,7 @@ that uses DSP techniques rather than ML for the PoC phase.
 """
 
 import logging
+import time
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -231,10 +232,12 @@ class SegmentHandler(FileSystemEventHandler):
         if not wav_path.exists():
             return
 
+        capture_ts = time.time()
+
         # Check if empty (delete if configured)
         if is_segment_empty(wav_path, self.config.silence_threshold):
             # Update heartbeat with 0 intensity (silence)
-            self.alert_manager.process_intensity(0.0)
+            self.alert_manager.process_intensity(0.0, capture_ts=capture_ts)
 
             if self.delete_empty:
                 try:
@@ -258,9 +261,7 @@ class SegmentHandler(FileSystemEventHandler):
             LOGGER.error(f"Detection failed for {wav_path.name}: {e}")
             return
 
-        # Process alert state (hysteresis based on intensity)
-        # Using filtered_rms as the intensity metric for hysteresis
-        self.alert_manager.process_intensity(result.filtered_rms)
+        self.alert_manager.process_intensity(result.filtered_rms, capture_ts=capture_ts)
 
         # Update overlay generator if present
         if self.overlay_generator:
