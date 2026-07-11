@@ -68,6 +68,7 @@ services:
       # camera-only operation (no mic): bbwatch then starts cleanly in
       # video-only mode instead of retrying a dead audio stream forever.
       - BBWATCH_AUDIO__DEVICE_INDEX=${BBWATCH_AUDIO_SOURCE:-rtsp://${RPI_HOST:-127.0.0.1}:8554/babycam}
+      - BBWATCH_MOTION__STREAM_URL=rtsp://${RPI_HOST:-127.0.0.1}:8554/raw_video
     command: /app/docker/entrypoint.sh
 
   # Interactive shell

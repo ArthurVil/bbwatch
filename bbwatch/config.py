@@ -141,6 +141,12 @@ class MotionConfig(StrictModel):
     history_len: int = Field(default=100, ge=1, le=1000, description="Motion history buffer size")
     fps: int = Field(default=10, ge=1, le=30, description="Motion detection frame rate")
 
+    # Video input
+    stream_url: str = Field(
+        default="",
+        description="Explicit RTSP URL for motion detection; when empty, derived from an RTSP audio URL",
+    )
+
     @field_validator("blur_size")
     @classmethod
     def blur_size_must_be_odd(cls, v: int) -> int:
