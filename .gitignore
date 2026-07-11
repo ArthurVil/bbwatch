@@ -72,3 +72,6 @@ docker/.env
 # Claude Code — machine-local files
 .claude/settings.local.json
 .claude/worktrees/
+
+# Machine-local deployment overrides (RPI_HOST, RPI_USER) — never commit
+.env
