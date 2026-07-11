@@ -48,13 +48,15 @@ services:
   # Full bbwatch application.
   # go2rtc runs natively on the host (deploy/go2rtc-host.yaml +
   # deploy/go2rtc.service): the CSI camera needs the host libcamera stack,
-  # which no stock go2rtc image provides. bbwatch reaches it through
-  # host.docker.internal; the overlay FIFO is shared via the ../data bind
-  # mount that host go2rtc reads.
+  # which no stock go2rtc image provides. bbwatch uses host networking so
+  # go2rtc is plain 127.0.0.1 (Docker's bridge isolation rejects
+  # container→host-gateway traffic); the overlay FIFO is shared via the
+  # ../data bind mount that host go2rtc reads.
   bbwatch:
     build:
       context: ..
       dockerfile: docker/Dockerfile.dev
+    network_mode: host
     volumes:
       - ..:/app
       - ../data:/app/data
@@ -62,9 +64,7 @@ services:
       - BBWATCH_LOG_LEVEL=DEBUG
       - BBWATCH_FAKE_HARDWARE=false
       - BBWATCH_DATA_DIR=/app/data
-      - BBWATCH_AUDIO__DEVICE_INDEX=rtsp://host.docker.internal:8554/babycam
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - BBWATCH_AUDIO__DEVICE_INDEX=rtsp://127.0.0.1:8554/babycam
     command: /app/docker/entrypoint.sh
 
   # Interactive shell
