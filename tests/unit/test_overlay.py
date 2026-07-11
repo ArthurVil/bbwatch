@@ -1,3 +1,5 @@
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -90,15 +92,21 @@ def test_status_color_logic(overlay_generator):
 
 
 def test_run_loop_writes_to_pipe(overlay_generator, mock_cv2):
-    """run_loop calls os.write() with frame bytes when the pipe is writable."""
+    """run_loop writes frame bytes when the fd is in select's WRITE list.
+
+    Regression guard: select returns (rlist, wlist, xlist) and the fd is
+    registered in wlist only — the mock must reflect that, otherwise a
+    wrong-list unpack in run_loop passes undetected.
+    """
     fake_fd = 42
     mock_cv2.cvtColor.return_value = MagicMock(tobytes=lambda: b"data")
 
     written = []
 
     def fake_os_write(fd, data):
-        written.append((fd, data))
+        written.append((fd, bytes(data)))
         overlay_generator.running = False  # stop after first write
+        return len(data)
 
     with (
         patch("os.open", return_value=fake_fd),
@@ -106,10 +114,52 @@ def test_run_loop_writes_to_pipe(overlay_generator, mock_cv2):
         patch("os.close"),
         patch("os.mkfifo"),
         patch("pathlib.Path.exists", return_value=False),
-        patch("select.select", return_value=([fake_fd], [fake_fd], [])),
+        patch("select.select", return_value=([], [fake_fd], [])),
         patch("time.sleep"),
     ):
         overlay_generator.run_loop()
 
     assert len(written) == 1
     assert written[0] == (fake_fd, b"data")
+
+
+@pytest.mark.slow
+def test_run_loop_writes_full_frames_to_real_fifo(tmp_path):
+    """End-to-end regression: a reader on a real FIFO receives complete frames.
+
+    Catches both halves of the broken write path: the fd being taken from
+    select's read list (nothing ever written) and unhandled short writes
+    (a 1.2MB frame can never fit the 64KiB pipe buffer in one os.write).
+    """
+    pipe_path = tmp_path / "overlay.pipe"
+    gen = OverlayGenerator(pipe_path=pipe_path, width=640, height=480, fps=30, history_len=20)
+    frame_size = 640 * 480 * 4
+
+    received = bytearray()
+    done = threading.Event()
+
+    def reader():
+        with open(pipe_path, "rb") as f:
+            while len(received) < 2 * frame_size:
+                chunk = f.read(2 * frame_size - len(received))
+                if not chunk:
+                    break
+                received.extend(chunk)
+        done.set()
+
+    gen.start()
+    try:
+        # run_loop creates the FIFO; wait for it before opening the reader.
+        deadline = time.time() + 5.0
+        while time.time() < deadline and not pipe_path.exists():
+            time.sleep(0.05)
+        assert pipe_path.exists(), "run_loop never created the FIFO"
+
+        reader_thread = threading.Thread(target=reader, daemon=True)
+        reader_thread.start()
+
+        assert done.wait(timeout=10.0), f"received only {len(received)} of {2 * frame_size} bytes"
+        assert len(received) == 2 * frame_size
+    finally:
+        gen.running = False
+        gen.thread.join(timeout=3.0)
