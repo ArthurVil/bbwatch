@@ -49,7 +49,8 @@ services:
   # go2rtc runs natively on the host (deploy/go2rtc-host.yaml +
   # deploy/go2rtc.service): the CSI camera needs the host libcamera stack,
   # which no stock go2rtc image provides. The go2rtc host comes from
-  # RPI_HOST in the repo-root .env — with rootless Docker neither
+  # RPI_HOST in docker/.env (compose reads .env from this file's directory,
+  # not the repo root) — with rootless Docker neither
   # localhost nor host-gateway reaches the real host, only its LAN IP.
   # The overlay FIFO is shared via the ../data bind mount go2rtc reads.
   bbwatch:
