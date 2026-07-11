@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from bbwatch.main import BabyMonitor
 
@@ -128,7 +129,11 @@ motion:
     @patch("bbwatch.main.SlidingWindowCapture")
     @patch("bbwatch.main.Observer")
     def test_monitor_start_hardware_fail(self, mock_observer, mock_capture, tmp_path):
-        """Test that monitor succeeds with mock hardware when real hardware is missing."""
+        """Without --fake-hardware and no devices, start() must refuse to run.
+
+        Regression: the monitor used to fall back to Mock sources and report
+        success — silently monitoring nothing.
+        """
         config_path = tmp_path / "config.yaml"
         config_path.write_text(f"data_dir: {tmp_path}\nfake_hardware: false")
 
@@ -142,9 +147,8 @@ motion:
             mock_detector.detect_picamera_devices.return_value = []
             mock_detector.detect_video_devices.return_value = []
 
-            # Even with no real hardware, falls back to mock sources
             monitor = BabyMonitor(config_path=config_path)
-            monitor.start()  # Should succeed with mock sources
-            assert monitor._audio_source is not None
-            assert monitor._video_source is not None
-            monitor.stop()
+            with pytest.raises(RuntimeError, match="Required hardware not found"):
+                monitor.start()
+            assert monitor._audio_source is None
+            assert monitor._video_source is None
