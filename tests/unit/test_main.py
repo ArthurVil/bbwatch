@@ -107,6 +107,28 @@ def test_raw_video_url_derived_from_audio_host(monitor):
     assert sources[0].url == "rtsp://go2rtc:8554/raw_video"
 
 
+def test_video_source_from_explicit_motion_url_with_audio_disabled(monitor):
+    """Regression: camera-only mode must still discover the video stream.
+
+    Video RTSP discovery used to be coupled to the audio URL being RTSP —
+    disabling audio silently killed video too ('Required hardware not found').
+    """
+    monitor.config.fake_hardware = False
+    monitor.config.audio.device_index = "disabled"  # camera-only deployment
+    monitor.config.motion.stream_url = "rtsp://192.168.1.75:8554/raw_video"
+
+    with patch("bbwatch.main.HardwareDetector") as mock_detector_class:
+        mock_detector = MagicMock()
+        mock_detector_class.return_value = mock_detector
+        mock_detector.detect_picamera_devices.return_value = []
+        mock_detector.detect_video_devices.return_value = []
+
+        sources = monitor._discover_video_sources(mock_detector)
+
+    assert len(sources) == 1
+    assert sources[0].url == "rtsp://192.168.1.75:8554/raw_video"
+
+
 def test_detect_hardware_local_fail(monitor):
     monitor.config.fake_hardware = False
     monitor.config.audio.device_index = 0  # Local

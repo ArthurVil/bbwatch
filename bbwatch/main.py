@@ -153,10 +153,12 @@ class BabyMonitor:
         for device in detector.detect_video_devices():
             sources.append(V4L2Source(device.path))
 
-        # Option 3: Docker network RTSP — only when audio is already RTSP (Docker mode).
-        # Derive the host from the audio URL: inside the compose network go2rtc
-        # is at rtsp://go2rtc:8554, not localhost.
-        if isinstance(self.config.audio.device_index, str) and self.config.audio.device_index.startswith("rtsp://"):
+        # Option 3: RTSP restream. Explicit motion.stream_url wins; otherwise
+        # derive the host from an RTSP audio URL (Docker mode). The explicit
+        # form is required for camera-only deployments where audio is disabled.
+        if self.config.motion.stream_url:
+            sources.append(RTSPVideoSource(self.config.motion.stream_url))
+        elif isinstance(self.config.audio.device_index, str) and self.config.audio.device_index.startswith("rtsp://"):
             raw_video_url = self.config.audio.device_index.rsplit("/", 1)[0] + "/raw_video"
             sources.append(RTSPVideoSource(raw_video_url))
 
