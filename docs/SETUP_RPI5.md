@@ -60,32 +60,36 @@ cd bbwatch
 git checkout feat/pi-camera-rpi5  # or current working branch
 ```
 
-### 2. Build ARM64 Docker image
+### 2. Install go2rtc on the host
+
+go2rtc must run **natively on the Pi**, not in Docker: the CSI camera needs the
+host libcamera stack, and no stock go2rtc image includes rpicam support
+(the containerized attempt fails with `unsupported scheme: rpicam:0`).
 
 ```bash
-make docker-build-rpi
+# Single static binary
+curl -sL -o /tmp/go2rtc \
+  https://github.com/AlexxIT/go2rtc/releases/download/v1.9.14/go2rtc_linux_arm64
+sudo install -m 755 /tmp/go2rtc /usr/local/bin/go2rtc
+
+# Config + systemd unit (adjust mic device, FIFO path and User= first)
+sudo cp deploy/go2rtc-host.yaml /etc/go2rtc.yaml
+sudo cp deploy/go2rtc.service /etc/systemd/system/go2rtc.service
+sudo systemctl daemon-reload && sudo systemctl enable --now go2rtc
 ```
 
-This cross-compiles the bbwatch image for ARM64. It will take ~5 minutes on your build host.
+The camera source is `exec:rpicam-vid … -o -` at 1080p@10fps; audio is
+captured from ALSA directly (no PulseAudio required).
 
-### 3. Deploy to RPi5
-
-On the Raspberry Pi:
-```bash
-# Pull the built image (substitute your registry)
-docker pull your-registry/bbwatch:rpi-latest
-
-# Or build directly on the Pi (takes longer but uses exact hardware):
-make docker-build-rpi
-```
-
-### 4. Start the stack
+### 3. Start bbwatch
 
 ```bash
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d bbwatch
 ```
 
-This starts both `bbwatch` (cry detection) and `go2rtc` (video streaming).
+bbwatch runs in Docker and reaches the host go2rtc via
+`rtsp://host.docker.internal:8554`; the overlay FIFO is shared through the
+repo's `data/` bind mount that host go2rtc reads.
 
 ## Verification
 
