@@ -56,7 +56,11 @@ services:
   bbwatch:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.dev
+      # Set BBWATCH_DOCKERFILE=Dockerfile.rpi in docker/.env on the Pi for the
+      # slim runtime-only image (no dev/test tooling); default stays the dev
+      # image for local work. Source is bind-mounted either way, so git pull
+      # still deploys code without a rebuild.
+      dockerfile: docker/${BBWATCH_DOCKERFILE:-Dockerfile.dev}
     network_mode: host
     volumes:
       - ..:/app
