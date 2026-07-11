@@ -1,3 +1,4 @@
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ def mock_subprocess():
         process_mock = MagicMock()
         process_mock.poll.return_value = None  # Running
         process_mock.returncode = None
+        process_mock.stderr.readline.return_value = b""  # EOF for drain thread
         mock.return_value = process_mock
         yield mock
 
@@ -24,6 +26,36 @@ def capture(tmp_path):
         sample_rate=16000,
         channels=1,
     )
+
+
+def test_stderr_is_drained_so_chatty_ffmpeg_cannot_wedge(capture):
+    """Regression: a process writing more stderr than the 64KiB pipe buffer
+    must run to completion (an undrained pipe blocks its writes forever,
+    leaving a wedged process that still looks alive), and the retained tail
+    must be available and bounded for the death report.
+    """
+    chatty_cmd = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stderr.write('E' * 200_000 + '\\nlast-line\\n')",
+    ]
+    with patch.object(capture, "_build_command", return_value=chatty_cmd):
+        capture._start_process()
+
+    # Without the drain thread this wait would time out: the child blocks
+    # writing stderr once the pipe fills and never exits.
+    capture._process.wait(timeout=5.0)
+
+    # Give the drain thread a moment to consume the remainder after exit.
+    import time
+
+    deadline = time.time() + 2.0
+    while time.time() < deadline and "last-line" not in capture._stderr_snapshot():
+        time.sleep(0.05)
+
+    snapshot = capture._stderr_snapshot()
+    assert "last-line" in snapshot
+    assert len(capture._stderr_tail) <= capture._stderr_tail.maxlen
 
 
 def test_audio_capture_init(capture, tmp_path):
