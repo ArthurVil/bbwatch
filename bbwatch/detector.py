@@ -16,6 +16,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
 from bbwatch.alert import AlertManager
 from bbwatch.config import DetectionConfig
+from bbwatch.latency import LatencyTracker, StageTimer
 from bbwatch.overlay_generator import OverlayGenerator
 
 LOGGER = logging.getLogger(__name__)
@@ -200,6 +201,7 @@ class SegmentHandler(FileSystemEventHandler):
         alert_manager: AlertManager,
         delete_empty: bool = True,
         overlay_generator: OverlayGenerator | None = None,
+        latency_report_interval_s: float = 10.0,
     ) -> None:
         """Initialize the segment handler.
 
@@ -208,12 +210,14 @@ class SegmentHandler(FileSystemEventHandler):
             alert_manager: Manager to handle alert state and effects.
             delete_empty: Whether to delete empty segments.
             overlay_generator: Generator to visualize audio levels.
+            latency_report_interval_s: Seconds between latency summaries.
         """
         super().__init__()
         self.config = config
         self.alert_manager = alert_manager
         self.delete_empty = delete_empty
         self.overlay_generator = overlay_generator
+        self._latency = LatencyTracker("audio", report_interval_s=latency_report_interval_s)
 
     def on_closed(self, event: "FileSystemEvent") -> None:
         """Handle file close events (finished writing)."""
@@ -234,10 +238,20 @@ class SegmentHandler(FileSystemEventHandler):
 
         capture_ts = time.time()
 
+        # Stage timing: origin = segment file mtime (when FFmpeg finished
+        # writing), so "pickup" measures the watchdog notification delay.
+        try:
+            origin_ts: float | None = wav_path.stat().st_mtime
+        except OSError:
+            origin_ts = None
+        timer = StageTimer(origin_ts=origin_ts)
+
         # Check if empty (delete if configured)
         if is_segment_empty(wav_path, self.config.silence_threshold):
+            timer.mark("empty_check")
             # Update heartbeat with 0 intensity (silence)
             self.alert_manager.process_intensity(0.0, capture_ts=capture_ts)
+            timer.mark("alert")
 
             if self.delete_empty:
                 try:
@@ -245,7 +259,9 @@ class SegmentHandler(FileSystemEventHandler):
                     LOGGER.debug(f"Deleted empty segment: {wav_path.name}")
                 except OSError as e:
                     LOGGER.warning(f"Failed to delete empty segment: {e}")
+            self._latency.record(timer)
             return
+        timer.mark("empty_check")
 
         # Run detection
         try:
@@ -260,8 +276,10 @@ class SegmentHandler(FileSystemEventHandler):
         except Exception as e:
             LOGGER.error(f"Detection failed for {wav_path.name}: {e}")
             return
+        timer.mark("dsp")
 
         self.alert_manager.process_intensity(result.filtered_rms, capture_ts=capture_ts)
+        timer.mark("alert")
 
         # Update overlay generator if present
         if self.overlay_generator:
@@ -271,3 +289,5 @@ class SegmentHandler(FileSystemEventHandler):
                 motion_level=0.0,  # Handled by main loop
                 audio_level=result.filtered_rms,
             )
+            timer.mark("overlay_state")
+        self._latency.record(timer)

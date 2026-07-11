@@ -221,6 +221,7 @@ class BabyMonitor:
                 motion_threshold_percent=self.config.motion.motion_threshold_percent,
                 dilation_iterations=self.config.motion.dilation_iterations,
                 fps=self.config.motion.fps,
+                latency_report_interval_s=self.config.latency_report_interval_s,
             )
 
         # Overlay Generator
@@ -228,7 +229,10 @@ class BabyMonitor:
         if self.config.alerts.enable_dynamic_overlay:
             LOGGER.info(f"Initializing dynamic overlay generator (pipe={overlay_pipe})")
             self._overlay_generator = OverlayGenerator(
-                pipe_path=overlay_pipe, fps=self.config.alerts.overlay_fps, history_len=self.config.motion.history_len
+                pipe_path=overlay_pipe,
+                fps=self.config.alerts.overlay_fps,
+                history_len=self.config.motion.history_len,
+                latency_report_interval_s=self.config.latency_report_interval_s,
             )
             self._overlay_generator.start()
         else:
@@ -247,6 +251,7 @@ class BabyMonitor:
                 alert_manager=self._alert_manager,
                 delete_empty=self.config.storage.delete_empty_segments,
                 overlay_generator=self._overlay_generator,
+                latency_report_interval_s=self.config.latency_report_interval_s,
             )
 
             self._observer = Observer()

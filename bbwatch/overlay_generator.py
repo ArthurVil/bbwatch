@@ -18,6 +18,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
+from bbwatch.latency import LatencyTracker, StageTimer
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -59,6 +61,7 @@ class OverlayGenerator:
         height: int = 480,
         fps: int = 5,
         history_len: int = 50,
+        latency_report_interval_s: float = 10.0,
     ) -> None:
         """Initialize overlay generator.
 
@@ -68,6 +71,7 @@ class OverlayGenerator:
             height: Image height.
             fps: Target frames per second.
             history_len: Number of data points to keep for plotting.
+            latency_report_interval_s: Seconds between latency summaries.
         """
         self.pipe_path = Path(pipe_path)
         self.width = width
@@ -75,6 +79,7 @@ class OverlayGenerator:
         self.fps = fps
         self.history_len = history_len
         self.running = False
+        self._latency = LatencyTracker("overlay", report_interval_s=latency_report_interval_s)
 
         # History for plotting
         self.motion_history = deque([0.0] * self.history_len, maxlen=self.history_len)
@@ -272,7 +277,9 @@ class OverlayGenerator:
                 while self.running:
                     start_time = time.time()
                     try:
+                        timer = StageTimer()
                         frame_data = self.generate_frame()
+                        timer.mark("render")
 
                         # Check writability before starting a frame (100ms timeout).
                         # select returns (rlist, wlist, xlist) — the fd is in the
@@ -283,9 +290,11 @@ class OverlayGenerator:
                         if writable:
                             try:
                                 self._write_frame(fd, frame_data)
+                                timer.mark("write")
                             except BrokenPipeError:
                                 LOGGER.warning("Pipe broken (reader disconnected), reconnecting...")
                                 break
+                        self._latency.record(timer)
 
                         if time.time() - last_log > 5.0:
                             with self._lock:
