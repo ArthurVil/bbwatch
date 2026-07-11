@@ -25,7 +25,7 @@ storage:
 alerts:
   status_file: status.json
   overlay_dir: overlays
-  alert_cooldown_s: 1.0
+  cooldown_s: 1.0
   health_timeout_s: 3.0
   overlay_fps: 15                  # Must match -framerate in docker/go2rtc.yaml
 

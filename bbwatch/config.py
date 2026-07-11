@@ -5,13 +5,23 @@ import logging
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOGGER = logging.getLogger(__name__)
 
 
-class HostConfig(BaseModel):
+class StrictModel(BaseModel):
+    """Base for all config sections: unknown keys are a hard error.
+
+    A typo'd key silently falling back to a default is a silent failure —
+    the operator believes a tuning applies when it does not.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class HostConfig(StrictModel):
     """Host hardware configuration (physical paths)."""
 
     video_device: str = Field(default="/dev/video0")
@@ -20,7 +30,7 @@ class HostConfig(BaseModel):
     pulse_server: str = Field(default=f"unix:/run/user/{Path.home().name}/pulse/native")
 
 
-class AudioConfig(BaseModel):
+class AudioConfig(StrictModel):
     """Audio capture configuration."""
 
     segment_duration_s: float = Field(default=3.0, ge=0.1, le=10.0)
@@ -39,7 +49,7 @@ class AudioConfig(BaseModel):
         return v
 
 
-class DetectionConfig(BaseModel):
+class DetectionConfig(StrictModel):
     """Cry detection configuration."""
 
     bandpass_low_hz: float = Field(default=250.0, ge=50.0, le=1000.0)
@@ -59,7 +69,7 @@ class DetectionConfig(BaseModel):
         return v
 
 
-class StorageConfig(BaseModel):
+class StorageConfig(StrictModel):
     """Disk storage configuration."""
 
     wav_dir: Path = Field(default=Path("wav_segments"))
@@ -68,7 +78,7 @@ class StorageConfig(BaseModel):
     cleanup_interval_s: float = Field(default=60.0, ge=10.0)
 
 
-class AlertConfig(BaseModel):
+class AlertConfig(StrictModel):
     """Alert configuration."""
 
     status_file: Path = Field(default=Path("status.json"))
@@ -107,7 +117,7 @@ class AlertConfig(BaseModel):
         return v
 
 
-class MotionConfig(BaseModel):
+class MotionConfig(StrictModel):
     """Motion detection configuration."""
 
     # Frame differencing parameters
@@ -143,7 +153,7 @@ class NotifierType(str, enum.Enum):
     NONE = "none"
 
 
-class WatchdogConfig(BaseModel):
+class WatchdogConfig(StrictModel):
     """Viewer connectivity watchdog — alerts when stream consumers drop to zero."""
 
     enabled: bool = Field(default=False)

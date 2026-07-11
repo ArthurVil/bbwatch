@@ -1,6 +1,9 @@
 """Unit tests for configuration management."""
 
+from pathlib import Path
+
 import pytest
+from pydantic import ValidationError
 
 from bbwatch.config import (
     AudioConfig,
@@ -107,6 +110,41 @@ detection:
         config = BBWatchConfig.from_yaml(config_file)
         assert config.log_level == "DEBUG"
         assert config.detection.rms_threshold == 0.05
+
+    def test_from_yaml_unknown_key_rejected(self, tmp_path):
+        """An unknown key in a config section must fail loudly, not be ignored.
+
+        Regression: config.yaml shipped `alert_cooldown_s` (real field:
+        `cooldown_s`); Pydantic silently dropped it and the operator's value
+        never applied.
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            """
+alerts:
+  alert_cooldown_s: 1.0
+"""
+        )
+        with pytest.raises(ValidationError):
+            BBWatchConfig.from_yaml(config_file)
+
+    def test_from_yaml_cooldown_applies(self, tmp_path):
+        """The correctly-named cooldown_s key must reach AlertConfig."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            """
+alerts:
+  cooldown_s: 1.0
+"""
+        )
+        config = BBWatchConfig.from_yaml(config_file)
+        assert config.alerts.cooldown_s == 1.0
+
+    def test_shipped_config_yaml_is_valid(self):
+        """The config.yaml shipped in the repo must load without errors."""
+        repo_config = Path(__file__).parents[2] / "config.yaml"
+        config = BBWatchConfig.from_yaml(repo_config)
+        assert config.alerts.cooldown_s == 1.0
 
     def test_from_yaml_invalid_yaml(self, tmp_path):
         """Invalid YAML should raise ValueError."""
