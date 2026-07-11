@@ -189,6 +189,9 @@ class BBWatchConfig(BaseSettings):
     log_level: str = Field(default="INFO")
     fake_hardware: bool = Field(default=False)
     data_dir: Path = Field(default=Path.home() / "bbwatch_data")
+    latency_report_interval_s: float = Field(
+        default=10.0, ge=1.0, description="Seconds between aggregated pipeline latency log summaries"
+    )
 
     @classmethod
     def from_yaml(cls, path: Path) -> "BBWatchConfig":

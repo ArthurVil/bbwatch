@@ -42,6 +42,7 @@ motion:
 log_level: INFO
 fake_hardware: false
 data_dir: ~/bbwatch_data
+latency_report_interval_s: 10.0    # Aggregated per-stage latency summary cadence (INFO log)
 
 # Host hardware configuration (physical paths)
 host:

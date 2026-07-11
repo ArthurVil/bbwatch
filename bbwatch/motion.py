@@ -13,6 +13,8 @@ from threading import Lock
 import cv2
 import numpy as np
 
+from bbwatch.latency import LatencyTracker, StageTimer
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -28,6 +30,7 @@ class MotionDetector:
         motion_threshold_percent: float = 1.0,
         dilation_iterations: int = 2,
         fps: int = 10,
+        latency_report_interval_s: float = 10.0,
     ) -> None:
         """Initialize motion detector.
 
@@ -39,6 +42,7 @@ class MotionDetector:
             motion_threshold_percent: Motion percentage to trigger detection.
             dilation_iterations: Number of dilation iterations for morphology.
             fps: Target frame rate for motion detection.
+            latency_report_interval_s: Seconds between latency summaries.
         """
         self.device_index = device_index
         self.threshold = threshold
@@ -57,6 +61,7 @@ class MotionDetector:
         # None until the first frame arrives. Read by is_healthy().
         self._last_frame_ts: float | None = None
         self._stop_event = threading.Event()
+        self._latency = LatencyTracker("motion", report_interval_s=latency_report_interval_s)
 
         # Determine capture backend
         if isinstance(device_index, str) and device_index.isdigit():
@@ -235,7 +240,14 @@ class MotionDetector:
                     frame_to_process = self._latest_frame.copy()
 
             if frame_to_process is not None:
+                timer = StageTimer()
+                frame_ts = self._last_frame_ts
+                if frame_ts is not None:
+                    # Age of the frame when processing begins (capture → process)
+                    timer.stages["frame_age"] = (time.time() - frame_ts) * 1000.0
                 self.process_frame(frame_to_process)
+                timer.mark("process")
+                self._latency.record(timer)
 
             # Maintain target FPS
             elapsed = time.time() - start_time
