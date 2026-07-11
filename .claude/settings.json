@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(wc:*)",
+      "WebFetch(domain:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(vcs:*)",
+      "Bash(cat *)",
+      "Bash(sed *)",
+      "Bash(source:*)",
+      "Bash(pytest:*)"
+    ],
+    "deny": [
+      "Bash(sudo:*)",
+      "Bash(pip install:*)",
+      "Bash(docker:*)",
+      "Bash(rm -rf:*)",
+      "Read(./.env)",
+      "Read(~/.ssh/**)",
+      "Bash(npm run:*)",
+      "Bash(npm test:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npx:*)",
+      "Bash(pnpm:*)",
+      "Bash(yarn:*)",
+      "Bash(bun:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(python3 -m pip install:*)",
+      "Bash(python -m pip install:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)"
+    ],
+    "defaultMode": "acceptEdits"
+  }
+}

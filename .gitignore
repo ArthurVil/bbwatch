@@ -68,3 +68,7 @@ Thumbs.db
 
 # Credentials — never commit
 docker/.env
+
+# Claude Code — machine-local files
+.claude/settings.local.json
+.claude/worktrees/
