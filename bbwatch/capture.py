@@ -8,7 +8,9 @@ import logging
 import subprocess
 import threading
 import time
+from collections import deque
 from pathlib import Path
+from typing import IO
 
 LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +53,10 @@ class AudioCapture:
         self._stop_event = threading.Event()
         self._restart_count = 0
         self._max_restarts = 10
+        # Bounded tail of FFmpeg stderr, filled by a drain thread (deque
+        # appends are thread-safe); unbounded buffering would leak on a
+        # chatty input, an undrained pipe would wedge FFmpeg.
+        self._stderr_tail: deque[bytes] = deque(maxlen=100)
 
     def _build_command(self) -> list[str]:
         """Build the FFmpeg command for audio capture.
@@ -116,11 +122,37 @@ class AudioCapture:
         try:
             self._process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
         except FileNotFoundError as e:
             raise RuntimeError("FFmpeg not found - please install ffmpeg") from e
+
+        # Drain stderr continuously: an undrained 64KiB pipe blocks FFmpeg's
+        # stderr writes, wedging the process while it still looks alive —
+        # segments stop and cry detection dies silently.
+        self._stderr_tail.clear()
+        stderr_stream = self._process.stderr
+        if stderr_stream is not None:
+            drain = threading.Thread(
+                target=self._drain_stderr,
+                args=(stderr_stream,),
+                name="FFmpegStderrDrain",
+                daemon=True,
+            )
+            drain.start()
+
+    def _drain_stderr(self, stream: IO[bytes]) -> None:
+        """Read FFmpeg stderr until EOF, keeping only the most recent lines."""
+        try:
+            for line in iter(stream.readline, b""):
+                self._stderr_tail.append(line)
+        except (OSError, ValueError):
+            pass  # Stream closed during shutdown
+
+    def _stderr_snapshot(self) -> str:
+        """Return the retained tail of FFmpeg's stderr for error reports."""
+        return b"".join(self._stderr_tail).decode(errors="replace")
 
     def stop(self) -> None:
         """Stop audio capture gracefully."""
@@ -161,11 +193,9 @@ class AudioCapture:
             if not self.is_running():
                 # Process died unexpectedly
                 exit_code = self._process.returncode if self._process else -1
-                stderr = ""
-                if self._process and self._process.stderr:
-                    stderr = self._process.stderr.read().decode()
+                stderr = self._stderr_snapshot()
 
-                LOGGER.error(f"FFmpeg process died (exit={exit_code}): {stderr[:200]}")
+                LOGGER.error(f"FFmpeg process died (exit={exit_code}): {stderr[-500:]}")
 
                 if self._restart_count < self._max_restarts:
                     self._restart_count += 1
