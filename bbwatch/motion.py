@@ -53,6 +53,11 @@ class MotionDetector:
         self._motion_history: deque[float] = deque(maxlen=history_len)
         self._lock = Lock()
 
+        # Liveness: timestamp of the last successfully captured frame.
+        # None until the first frame arrives. Read by is_healthy().
+        self._last_frame_ts: float | None = None
+        self._stop_event = threading.Event()
+
         # Determine capture backend
         if isinstance(device_index, str) and device_index.isdigit():
             self.device_index = int(device_index)
@@ -106,9 +111,28 @@ class MotionDetector:
         with self._lock:
             return list(self._motion_history)
 
+    def last_frame_age_s(self) -> float | None:
+        """Seconds since the last captured frame; None if no frame yet."""
+        ts = self._last_frame_ts
+        return None if ts is None else time.time() - ts
+
+    def is_healthy(self, max_frame_age_s: float = 10.0) -> bool:
+        """True when the capture thread is alive and frames are fresh.
+
+        Polled by the main loop so a dead or stalled capture (device
+        unplugged, RTSP hung) is surfaced instead of silently serving
+        stale motion values forever.
+        """
+        thread = getattr(self, "capture_thread", None)
+        if thread is None or not thread.is_alive():
+            return False
+        age = self.last_frame_age_s()
+        return age is not None and age <= max_frame_age_s
+
     def start(self) -> None:
         """Start the motion detection threads."""
         self.running = True
+        self._stop_event.clear()
 
         # Latest frame buffer (thread-safe)
         self._latest_frame: np.ndarray | None = None
@@ -125,42 +149,77 @@ class MotionDetector:
     def stop(self) -> None:
         """Stop the motion detection threads."""
         self.running = False
+        self._stop_event.set()
         if hasattr(self, "capture_thread"):
             self.capture_thread.join(timeout=1.0)
         if hasattr(self, "process_thread"):
             self.process_thread.join(timeout=1.0)
 
+    # Delay between reconnection attempts when the device cannot be opened.
+    RECONNECT_INTERVAL_S: float = 5.0
+
+    def _open_capture(self) -> "cv2.VideoCapture":
+        """Open the video device, bounding network I/O for stream URLs.
+
+        Without open/read timeouts a hung RTSP stream blocks cap.read()
+        indefinitely, outliving stop()'s join timeout.
+        """
+        if isinstance(self.device_index, str) and "://" in self.device_index:
+            return cv2.VideoCapture(
+                self.device_index,
+                cv2.CAP_FFMPEG,
+                [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000],
+            )
+        return cv2.VideoCapture(self.device_index)
+
     def _capture_loop(self) -> None:
-        """Continuously grab frames to keep buffer fresh."""
+        """Continuously grab frames, reconnecting when the device fails.
+
+        This loop must never exit while running: a dead capture thread
+        would leave get_current_motion() silently serving stale values.
+        Open/read failures are logged and retried forever.
+        """
         LOGGER.info(f"Starting capture loop on {self.device_index}")
-        cap = cv2.VideoCapture(self.device_index)
+        cap: cv2.VideoCapture | None = None
 
-        if not cap.isOpened():
-            LOGGER.error(f"Failed to open video device {self.device_index}")
-            return
+        try:
+            while self.running:
+                if cap is None:
+                    cap = self._open_capture()
+                    if not cap.isOpened():
+                        LOGGER.error(
+                            f"Failed to open video device {self.device_index}; "
+                            f"retrying in {self.RECONNECT_INTERVAL_S}s"
+                        )
+                        cap.release()
+                        cap = None
+                        self._stop_event.wait(self.RECONNECT_INTERVAL_S)
+                        continue
 
-        # Set low resolution for performance
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    LOGGER.info(f"Video device {self.device_index} opened")
+                    # Low resolution + minimal buffer for performance/freshness
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-        # Set buffer size to 1 if possible (backend dependent)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                ret, frame = cap.read()
+                if not ret:
+                    LOGGER.warning("Failed to read frame; reopening video device")
+                    cap.release()
+                    cap = None
+                    self._stop_event.wait(1.0)
+                    continue
 
-        while self.running:
-            ret, frame = cap.read()
-            if not ret:
-                LOGGER.warning("Failed to read frame")
-                time.sleep(1)
-                continue
+                # Store latest frame and refresh liveness timestamp
+                self._last_frame_ts = time.time()
+                with self._frame_lock:
+                    self._latest_frame = frame
 
-            # Store latest frame
-            with self._frame_lock:
-                self._latest_frame = frame
-
-            # No sleep here! Consume frames as fast as possible.
-
-        cap.release()
-        LOGGER.info("Capture loop stopped")
+                # No sleep here! Consume frames as fast as possible.
+        finally:
+            if cap is not None:
+                cap.release()
+            LOGGER.info("Capture loop stopped")
 
     def _process_loop(self) -> None:
         """Process the latest available frame at target FPS."""

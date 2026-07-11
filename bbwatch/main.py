@@ -324,6 +324,7 @@ class BabyMonitor:
         try:
             self.start()
 
+            last_health_check = time.time()
             while self._running:
                 # Update legacy overlay logic (file linking)
                 if self._overlay_controller is not None:
@@ -356,10 +357,18 @@ class BabyMonitor:
                         latency_ms=latency_ms,
                     )
 
-                # Log periodic status
-                if self._storage is not None:
-                    current, max_size = self._storage.get_usage()
-                    # LOGGER.debug(f"Storage: {current:.1f}/{max_size:.1f} MB ({current / max_size * 100:.1f}%)")
+                # Component health check (throttled): a dead capture thread
+                # must be reported, never silently served as stale data.
+                now = time.time()
+                if now - last_health_check >= 10.0:
+                    last_health_check = now
+                    if self._motion_detector and not self._motion_detector.is_healthy():
+                        LOGGER.error(
+                            "Motion detector UNHEALTHY: capture thread dead or no frame "
+                            f"for {self._motion_detector.last_frame_age_s()} s"
+                        )
+                    if self._capture and not self._capture.is_running():
+                        LOGGER.error("Audio capture UNHEALTHY: FFmpeg not running — cry detection is down")
 
                 time.sleep(0.05)  # 20Hz — responsive overlay state updates
 

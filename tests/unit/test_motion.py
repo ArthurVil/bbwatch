@@ -1,3 +1,4 @@
+import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -117,7 +118,83 @@ def test_capture_loop(motion_detector, mock_cv2):
     with pytest.raises(RuntimeError, match="Stop loop"):
         motion_detector._capture_loop()
 
-    mock_cap.release.assert_not_called()  # Crashed before release
+    mock_cap.release.assert_called()  # finally block releases even on crash
+
+
+def test_capture_loop_retries_when_device_fails_to_open(motion_detector, mock_cv2):
+    """Regression: an open failure must retry, never kill the thread.
+
+    The loop used to `return` when the device failed to open, leaving
+    get_current_motion() silently serving stale values forever.
+    """
+    mock_cap = MagicMock()
+    mock_cap.isOpened.return_value = False
+    mock_cv2.VideoCapture.return_value = mock_cap
+
+    motion_detector.running = True
+    attempts = []
+
+    def count_and_stop(timeout):
+        attempts.append(timeout)
+        if len(attempts) >= 3:
+            motion_detector.running = False
+
+    with patch.object(motion_detector._stop_event, "wait", side_effect=count_and_stop):
+        motion_detector._capture_loop()  # returns cleanly instead of dying early
+
+    assert mock_cv2.VideoCapture.call_count >= 3  # kept retrying
+    assert mock_cap.release.call_count >= 3  # each failed open is released
+
+
+def test_capture_loop_reopens_on_read_failure(motion_detector, mock_cv2):
+    """A failed read must reopen the device, not spin on a dead handle."""
+    dead_cap = MagicMock()
+    dead_cap.isOpened.return_value = True
+    dead_cap.read.return_value = (False, None)
+
+    live_cap = MagicMock()
+    live_cap.isOpened.return_value = True
+    frame = np.zeros((10, 10, 3), dtype=np.uint8)
+
+    def deliver_and_stop():
+        motion_detector.running = False
+        return (True, frame)
+
+    live_cap.read.side_effect = lambda: deliver_and_stop()
+    mock_cv2.VideoCapture.side_effect = [dead_cap, live_cap]
+
+    motion_detector.running = True
+    motion_detector._frame_lock = MagicMock()
+
+    with patch.object(motion_detector._stop_event, "wait"):
+        motion_detector._capture_loop()
+
+    dead_cap.release.assert_called()  # dead handle dropped
+    assert motion_detector._last_frame_ts is not None  # liveness updated
+
+
+def test_is_healthy_reflects_thread_and_frame_freshness(motion_detector):
+    """is_healthy() is the main loop's signal that motion data is real."""
+    # No capture thread yet
+    assert motion_detector.is_healthy() is False
+
+    motion_detector.capture_thread = MagicMock(is_alive=lambda: True)
+
+    # Thread alive but no frame ever captured
+    assert motion_detector.is_healthy() is False
+
+    # Fresh frame
+    motion_detector._last_frame_ts = time.time()
+    assert motion_detector.is_healthy() is True
+
+    # Stale frame
+    motion_detector._last_frame_ts = time.time() - 60.0
+    assert motion_detector.is_healthy() is False
+
+    # Dead thread with fresh frame
+    motion_detector.capture_thread = MagicMock(is_alive=lambda: False)
+    motion_detector._last_frame_ts = time.time()
+    assert motion_detector.is_healthy() is False
 
 
 def test_start_stop(motion_detector, mock_cv2):
