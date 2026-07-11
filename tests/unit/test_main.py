@@ -86,6 +86,27 @@ def test_detect_hardware_network(monitor):
         assert "RTSP" in repr(monitor._video_source)
 
 
+def test_raw_video_url_derived_from_audio_host(monitor):
+    """Regression: the raw_video URL must reuse the audio URL's host.
+
+    Inside docker compose, go2rtc is at rtsp://go2rtc:8554, not localhost —
+    a hardcoded localhost stream is unreachable from the bbwatch container.
+    """
+    monitor.config.fake_hardware = False
+    monitor.config.audio.device_index = "rtsp://go2rtc:8554/babycam"
+
+    with patch("bbwatch.main.HardwareDetector") as mock_detector_class:
+        mock_detector = MagicMock()
+        mock_detector_class.return_value = mock_detector
+        mock_detector.detect_picamera_devices.return_value = []
+        mock_detector.detect_video_devices.return_value = []
+
+        sources = monitor._discover_video_sources(mock_detector)
+
+    assert len(sources) == 1
+    assert sources[0].url == "rtsp://go2rtc:8554/raw_video"
+
+
 def test_detect_hardware_local_fail(monitor):
     monitor.config.fake_hardware = False
     monitor.config.audio.device_index = 0  # Local
