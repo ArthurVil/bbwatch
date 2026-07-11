@@ -134,10 +134,8 @@ class BabyMonitor:
         for device in detector.detect_audio_devices():
             sources.append(ALSASource(device.alsa_id))
 
-        # Option 3: Fallback mock when no hardware found
-        if not sources:
-            sources.append(MockAudioSource("Audio"))
-
+        # No mock fallback outside --fake-hardware: a monitor that silently
+        # pretends to listen is worse than one that refuses to start.
         return sources
 
     def _discover_video_sources(self, detector: HardwareDetector) -> list[VideoSource]:
@@ -160,10 +158,7 @@ class BabyMonitor:
         if isinstance(self.config.audio.device_index, str) and self.config.audio.device_index.startswith("rtsp://"):
             sources.append(RTSPVideoSource("rtsp://localhost:8554/raw_video"))
 
-        # Option 4: Fallback mock when no hardware found
-        if not sources:
-            sources.append(MockVideoSource("Video"))
-
+        # No mock fallback outside --fake-hardware (see _discover_audio_sources).
         return sources
 
     @staticmethod
@@ -243,35 +238,36 @@ class BabyMonitor:
         if self._motion_detector:
             self._motion_detector.start()
 
-        # Start file watcher for detection
-        handler = SegmentHandler(
-            config=self.config.detection,
-            alert_manager=self._alert_manager,
-            delete_empty=self.config.storage.delete_empty_segments,
-            overlay_generator=self._overlay_generator,
-        )
+        # Audio pipeline (file watcher + capture) — only with a real audio source.
+        # _detect_hardware() allows video-only operation; make that explicit
+        # and loud rather than crashing or pretending to listen.
+        if self._audio_source is not None:
+            handler = SegmentHandler(
+                config=self.config.detection,
+                alert_manager=self._alert_manager,
+                delete_empty=self.config.storage.delete_empty_segments,
+                overlay_generator=self._overlay_generator,
+            )
 
-        self._observer = Observer()
-        self._observer.schedule(
-            handler,
-            str(self.config.storage.wav_dir),
-            recursive=False,
-        )
-        self._observer.start()
+            self._observer = Observer()
+            self._observer.schedule(
+                handler,
+                str(self.config.storage.wav_dir),
+                recursive=False,
+            )
+            self._observer.start()
 
-        if self._audio_source is None:
-            raise RuntimeError("Audio source not initialized")
-
-        # Start audio capture
-        self._capture = SlidingWindowCapture(
-            device=self._audio_source.open(),
-            output_dir=self.config.storage.wav_dir,
-            segment_duration=self.config.audio.segment_duration_s,
-            overlap=self.config.audio.overlap_s,
-            sample_rate=self.config.audio.sample_rate,
-            channels=self.config.audio.channels,
-        )
-        self._capture.start()
+            self._capture = SlidingWindowCapture(
+                device=self._audio_source.open(),
+                output_dir=self.config.storage.wav_dir,
+                segment_duration=self.config.audio.segment_duration_s,
+                overlap=self.config.audio.overlap_s,
+                sample_rate=self.config.audio.sample_rate,
+                channels=self.config.audio.channels,
+            )
+            self._capture.start()
+        else:
+            LOGGER.error("No audio source available — CRY DETECTION IS DISABLED for this run")
 
         if self.config.watchdog.enabled:
             self._watchdog = StreamWatchdog(self.config.watchdog, make_notifier(self.config.watchdog))

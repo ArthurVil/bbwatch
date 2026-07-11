@@ -98,10 +98,48 @@ def test_detect_hardware_local_fail(monitor):
         mock_detector.detect_picamera_devices.return_value = []
         mock_detector.detect_video_devices.return_value = []
 
-        # Even with no hardware, fallback to mock sources means success
-        assert monitor._detect_hardware() is True
-        assert monitor._audio_source is not None  # Mock fallback
-        assert monitor._video_source is not None  # Mock fallback
+        # No hardware and no --fake-hardware: detection must FAIL, never
+        # fall back to mock sources (a monitor that silently pretends to
+        # listen is a reliability defect).
+        assert monitor._detect_hardware() is False
+        assert monitor._audio_source is None
+        assert monitor._video_source is None
+
+
+def test_start_refuses_without_hardware(monitor, mock_components):
+    """start() must raise when no real hardware exists (regression)."""
+    monitor.config.fake_hardware = False
+    monitor.config.audio.device_index = 0  # Local, not RTSP
+
+    with patch("bbwatch.main.HardwareDetector") as mock_detector_class:
+        mock_detector = MagicMock()
+        mock_detector_class.return_value = mock_detector
+        mock_detector.detect_audio_devices.return_value = []
+        mock_detector.detect_picamera_devices.return_value = []
+        mock_detector.detect_video_devices.return_value = []
+
+        with pytest.raises(RuntimeError, match="Required hardware not found"):
+            monitor.start()
+
+
+def test_start_video_only_disables_cry_detection(monitor, mock_components):
+    """With a video source but no audio, start() runs with capture disabled."""
+    monitor.config.fake_hardware = False
+    monitor.config.audio.device_index = 0  # Local, not RTSP
+
+    video_source = MagicMock()
+    video_source.open.return_value = "rtsp://localhost:8554/raw_video"
+
+    with (
+        patch.object(monitor, "_discover_audio_sources", return_value=[]),
+        patch.object(monitor, "_discover_video_sources", return_value=[video_source]),
+    ):
+        monitor.start()
+
+    assert monitor._capture is None
+    assert monitor._observer is None
+    assert monitor._motion_detector is not None
+    monitor.stop()
 
 
 def test_start_stop_sequence(monitor, mock_components):
