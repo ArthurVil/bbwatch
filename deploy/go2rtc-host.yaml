@@ -1,0 +1,47 @@
+# go2rtc host configuration for RPi5 + CSI camera (installed at /etc/go2rtc.yaml)
+#
+# go2rtc runs natively on the Pi (systemd unit: deploy/go2rtc.service) because
+# the CSI camera needs the host libcamera stack — the stock go2rtc Docker image
+# has no rpicam support. bbwatch stays in Docker and reaches these streams via
+# rtsp://host.docker.internal:8554.
+#
+# Install (from the repo root on the Pi):
+#   sudo cp deploy/go2rtc-host.yaml /etc/go2rtc.yaml   # adjust paths/devices below
+#   sudo cp deploy/go2rtc.service /etc/systemd/system/go2rtc.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now go2rtc
+
+streams:
+  # CSI camera via rpicam-vid (IMX500 AI Camera): 1080p@10fps H.264.
+  # 10 fps: sufficient for a baby monitor, ~3x less CPU for the Pi5's
+  # software-only encode/decode chain, and longer low-light exposures.
+  device_video:
+    - "exec:rpicam-vid -t 0 --width 1920 --height 1080 --framerate 10 --codec h264 --inline --nopreview -o -#autostart"
+
+  # USB mic via ALSA (no PulseAudio on this host).
+  # NOTE: match this with audio.device_index in config.yaml; USB card numbers
+  # can drift across reboots — prefer plughw:CARD=<name> form if it happens.
+  device_audio:
+    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f alsa -i plughw:3,0 -c:a aac -b:a 128k -f rtsp {output}#autostart"
+
+  # Restream consumed by bbwatch motion detection (avoids the overlaid stream)
+  raw_video:
+    - rtsp://127.0.0.1:8554/device_video
+
+  # Composite with the dynamic overlay FIFO written by the bbwatch container.
+  # The FIFO path is the host bind mount of the container's /app/data.
+  # -framerate 15 MUST match alerts.overlay_fps in config.yaml.
+  babycam:
+    - "exec:ffmpeg -hide_banner -v error \
+      -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_video \
+      -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_audio \
+      -f rawvideo -pixel_format rgba -video_size 640x480 -framerate 15 -i /home/kanai/bbwatch/data/overlays/overlay.pipe \
+      -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=1' \
+      -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
+      -c:a copy \
+      -f rtsp {output}"
+
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
