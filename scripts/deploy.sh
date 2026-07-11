@@ -4,6 +4,15 @@
 
 set -e
 
+# Load machine-local overrides (RPI_HOST, RPI_USER) from gitignored .env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${SCRIPT_DIR}/../.env" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "${SCRIPT_DIR}/../.env"
+    set +a
+fi
+
 # Configuration
 RPI_HOST="${RPI_HOST:-babypi.local}"
 RPI_USER="${RPI_USER:-pi}"
