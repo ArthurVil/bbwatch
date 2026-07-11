@@ -64,7 +64,10 @@ services:
       - BBWATCH_LOG_LEVEL=DEBUG
       - BBWATCH_FAKE_HARDWARE=false
       - BBWATCH_DATA_DIR=/app/data
-      - BBWATCH_AUDIO__DEVICE_INDEX=rtsp://${RPI_HOST:-127.0.0.1}:8554/babycam
+      # Set BBWATCH_AUDIO_SOURCE=disabled in docker/.env for deliberate
+      # camera-only operation (no mic): bbwatch then starts cleanly in
+      # video-only mode instead of retrying a dead audio stream forever.
+      - BBWATCH_AUDIO__DEVICE_INDEX=${BBWATCH_AUDIO_SOURCE:-rtsp://${RPI_HOST:-127.0.0.1}:8554/babycam}
     command: /app/docker/entrypoint.sh
 
   # Interactive shell

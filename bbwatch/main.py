@@ -232,6 +232,8 @@ class BabyMonitor:
             LOGGER.info(f"Initializing dynamic overlay generator (pipe={overlay_pipe})")
             self._overlay_generator = OverlayGenerator(
                 pipe_path=overlay_pipe,
+                width=self.config.alerts.overlay_width,
+                height=self.config.alerts.overlay_height,
                 fps=self.config.alerts.overlay_fps,
                 history_len=self.config.motion.history_len,
                 latency_report_interval_s=self.config.latency_report_interval_s,
