@@ -212,6 +212,27 @@ class OverlayGenerator:
         img_rgba = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
         return img_rgba.tobytes()
 
+    def _write_frame(self, fd: int, frame_data: bytes) -> None:
+        """Write one complete frame to the FIFO, handling short writes.
+
+        A frame (width*height*4 bytes) is far larger than the pipe buffer
+        (64 KiB on Linux), so a single os.write() on the non-blocking fd is
+        always partial. Once a frame is started it must be written to
+        completion: FFmpeg's rawvideo demuxer has no framing markers, so a
+        partial frame desyncs the stream permanently.
+
+        Raises:
+            BrokenPipeError: The reader disconnected mid-frame.
+        """
+        view = memoryview(frame_data)
+        while view and self.running:
+            try:
+                written = os.write(fd, view)
+                view = view[written:]
+            except BlockingIOError:
+                # Pipe buffer full — wait until the reader drains it.
+                select.select([], [fd], [], 1.0)
+
     def run_loop(self) -> None:
         """Run the generation loop (blocking)."""
         LOGGER.info(f"Starting overlay loop writing to {self.pipe_path}")
@@ -253,17 +274,18 @@ class OverlayGenerator:
                     try:
                         frame_data = self.generate_frame()
 
-                        # Use select to check writability (non-blocking, 100ms timeout).
-                        # If the pipe buffer is full, drop this frame instead of blocking.
-                        ready, _, _ = select.select([], [fd], [], 0.1)
-                        if ready:
+                        # Check writability before starting a frame (100ms timeout).
+                        # select returns (rlist, wlist, xlist) — the fd is in the
+                        # WRITE list. If the reader is not keeping up, drop the
+                        # whole frame here; a frame must never be started and
+                        # abandoned (rawvideo has no framing markers).
+                        _, writable, _ = select.select([], [fd], [], 0.1)
+                        if writable:
                             try:
-                                os.write(fd, frame_data)
+                                self._write_frame(fd, frame_data)
                             except BrokenPipeError:
                                 LOGGER.warning("Pipe broken (reader disconnected), reconnecting...")
                                 break
-                            except BlockingIOError:
-                                pass  # Buffer full — drop frame
 
                         if time.time() - last_log > 5.0:
                             with self._lock:
