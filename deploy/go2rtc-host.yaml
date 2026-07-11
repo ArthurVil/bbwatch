@@ -15,7 +15,9 @@ streams:
   # 10 fps: sufficient for a baby monitor, ~3x less CPU for the Pi5's
   # software-only encode/decode chain, and longer low-light exposures.
   device_video:
-    - "exec:rpicam-vid -t 0 --width 1920 --height 1080 --framerate 10 --codec h264 --inline --nopreview -o -#autostart"
+    # --libav-format h264 is required: with '-o -' rpicam-vid's libav backend
+    # cannot infer the container format and exits immediately.
+    - "exec:rpicam-vid -t 0 --width 1920 --height 1080 --framerate 10 --codec h264 --inline --nopreview --libav-format h264 -o -#autostart"
 
   # USB mic via ALSA (no PulseAudio on this host).
   # NOTE: match this with audio.device_index in config.yaml; USB card numbers

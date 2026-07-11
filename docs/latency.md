@@ -1,8 +1,12 @@
 # Latency Report
 
 End-to-end latency analysis of bbwatch, mapped to the per-stage instrumentation
-added in `bbwatch/latency.py`. Status: instrumentation deployed; measured columns
-to be filled from RPi5 production logs.
+added in `bbwatch/latency.py`.
+
+**Measured 2026-07-11 on the production RPi5** (AI Camera/IMX500 at 1080p@10fps
+via host-native go2rtc, motion and overlay at 15 fps, one RTSP viewer
+consuming `babycam`). Audio pipeline numbers are pending — no microphone was
+connected at measurement time.
 
 Related: [latency_improvements.md](latency_improvements.md) (improvement plan),
 [decisions/](decisions/) (ADRs).
@@ -82,8 +86,12 @@ CSI camera (imx708) ──libcamera──▶ go2rtc `rpicam:0` (1080p30 H.264)
 
 | Stage | Expected (x86 dev) | Measured RPi5 avg | Measured RPi5 max |
 |---|---|---|---|
-| frame_age | ≤ ~70 ms (one 15 fps period) | *TBD* | *TBD* |
-| process | 5–20 ms @ decode resolution | *TBD* | *TBD* |
+| frame_age | ≤ ~70 ms (one 15 fps period) | **46–49 ms** | **104–115 ms** |
+| process | 5–20 ms @ decode resolution | **10–12 ms** | **20–26 ms** |
+
+Measured at 15 fps processing of the 1080p10 stream (n≈150 per 10 s window):
+comfortably within budget. frame_age max ~110 ms reflects the 10 fps source —
+a frame can be up to one source period (100 ms) old before processing.
 
 `frame_age` is the one to watch: sustained growth means the process loop or the
 RTSP decode can't keep up (CPU saturation or network stall).
@@ -105,8 +113,13 @@ main loop (20 Hz) ──update_state──▶ OverlayGenerator.run_loop (15 fps)
 
 | Stage | Expected (x86 dev) | Measured RPi5 avg | Measured RPi5 max |
 |---|---|---|---|
-| render | 3–15 ms | *TBD* | *TBD* |
-| write | ~1 ms when reader keeps up; grows under backpressure | *TBD* | *TBD* |
+| render | 3–15 ms | **1.3–2.1 ms** | 8.2 ms (12.8 ms first frame) |
+| write | ~1 ms when reader keeps up; grows under backpressure | **1.0–12 ms** | 12–58 ms steady; **624 ms spike** while go2rtc's FFmpeg starts up |
+
+The 624 ms write max occurred in the window where the babycam consumer FFmpeg
+was starting (pipe buffer full until its reader began draining); steady state
+settles to avg ~1 ms / max ~12 ms. render+write ≈ 3 ms against the 66 ms frame
+budget — the overlay path has ample headroom.
 
 `write` doubles as a **backpressure gauge**: it includes waiting for go2rtc's
 FFmpeg to drain the pipe. If `render + write` exceeds the 66 ms frame budget
@@ -120,6 +133,19 @@ Measured only end-to-end (viewer-side), not in bbwatch logs:
   share of glass-to-glass latency; `-g 30` keyframe interval bounds join time).
 - AAC audio encode + the `shortest=0` A/V sync in the babycam filter graph.
 - Network (LAN Wi-Fi vs Ethernet) and browser decode.
+
+## Measured CPU budget (RPi5, one babycam viewer, 2026-07-11)
+
+| Process | % of one core | Role |
+|---|---|---|
+| babycam FFmpeg | ~75% | decode 1080p10 + overlay filter + libx264 encode (runs only while viewed) |
+| bbwatch python | ~50% | motion RTSP decode + diff, overlay render, main loop |
+| rpicam-vid | ~33% | 1080p10 software H.264 encode (Pi 5 has no HW encoder) |
+| go2rtc | ~0% | pure remux |
+
+≈1.6 of 4 cores with an active viewer; ≈0.85 idle (babycam's FFmpeg starts on
+demand). See [camera.md](camera.md) for the offload roadmap (on-sensor
+inference replacing the motion decode path).
 
 ## Config knobs that move these numbers
 
