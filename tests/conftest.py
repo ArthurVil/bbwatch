@@ -91,13 +91,15 @@ def white_noise_wav(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def test_config() -> dict:
-    """Default test configuration."""
+    """Default DetectionConfig kwargs for tests.
+
+    Only real DetectionConfig fields belong here — config models forbid
+    unknown keys, so stray entries fail construction (as they should).
+    """
     return {
         "bandpass_low_hz": 250.0,
         "bandpass_high_hz": 800.0,
         "rms_threshold": 0.02,
         "min_active_ratio": 0.3,
         "silence_threshold": 0.001,
-        "delete_empty_segments": True,
-        "alert_cooldown_s": 5.0,
     }
