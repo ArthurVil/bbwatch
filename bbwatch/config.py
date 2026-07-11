@@ -106,6 +106,11 @@ class AlertConfig(StrictModel):
     # Dynamic Overlay
     enable_dynamic_overlay: bool = Field(default=True)
     overlay_fps: int = Field(default=5, ge=1, le=30)
+    # Overlay canvas size — must match the composited video resolution AND the
+    # -video_size of the overlay pipe input in the go2rtc config, or the
+    # overlay is drawn unscaled in a corner of the frame.
+    overlay_width: int = Field(default=640, ge=160, le=3840)
+    overlay_height: int = Field(default=480, ge=120, le=2160)
 
     @field_validator("trigger_low")
     @classmethod
