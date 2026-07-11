@@ -48,10 +48,10 @@ services:
   # Full bbwatch application.
   # go2rtc runs natively on the host (deploy/go2rtc-host.yaml +
   # deploy/go2rtc.service): the CSI camera needs the host libcamera stack,
-  # which no stock go2rtc image provides. bbwatch uses host networking so
-  # go2rtc is plain 127.0.0.1 (Docker's bridge isolation rejects
-  # container→host-gateway traffic); the overlay FIFO is shared via the
-  # ../data bind mount that host go2rtc reads.
+  # which no stock go2rtc image provides. The go2rtc host comes from
+  # RPI_HOST in the repo-root .env — with rootless Docker neither
+  # localhost nor host-gateway reaches the real host, only its LAN IP.
+  # The overlay FIFO is shared via the ../data bind mount go2rtc reads.
   bbwatch:
     build:
       context: ..
@@ -64,7 +64,7 @@ services:
       - BBWATCH_LOG_LEVEL=DEBUG
       - BBWATCH_FAKE_HARDWARE=false
       - BBWATCH_DATA_DIR=/app/data
-      - BBWATCH_AUDIO__DEVICE_INDEX=rtsp://127.0.0.1:8554/babycam
+      - BBWATCH_AUDIO__DEVICE_INDEX=rtsp://${RPI_HOST:-127.0.0.1}:8554/babycam
     command: /app/docker/entrypoint.sh
 
   # Interactive shell
