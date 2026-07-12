@@ -21,6 +21,12 @@ class StreamWatchdog:
     """Background thread that alerts when stream viewers disconnect."""
 
     def __init__(self, config: WatchdogConfig, notifier: Notifier) -> None:
+        """Initialize the watchdog.
+
+        Args:
+            config: Poll interval, target stream, and go2rtc API credentials.
+            notifier: Sink for the disconnect alert (see `notifier.py`).
+        """
         self._config = config
         self._notifier = notifier
         self._stop = threading.Event()
@@ -28,6 +34,7 @@ class StreamWatchdog:
         self._last_count: int | None = None  # None = not yet sampled; avoids false alert on startup
 
     def start(self) -> None:
+        """Start the background polling thread."""
         self._thread = threading.Thread(target=self._run, daemon=True, name="stream-watchdog")
         self._thread.start()
         LOGGER.info(
@@ -36,12 +43,19 @@ class StreamWatchdog:
         )
 
     def stop(self) -> None:
+        """Signal the polling thread to exit and join it (bounded wait)."""
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=5)
             self._thread = None
 
     def _run(self) -> None:
+        """Poll loop: fires the notifier on a >0 -> 0 consumer-count transition.
+
+        Poll errors (go2rtc unreachable, malformed response) are logged and
+        retried on the next interval — they must never kill this thread,
+        since a dead watchdog silently stops alerting on disconnects.
+        """
         while not self._stop.wait(self._config.poll_interval_s):
             try:
                 count = self._consumer_count()
