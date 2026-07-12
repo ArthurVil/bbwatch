@@ -313,3 +313,69 @@ def test_run_loop(monitor, mock_components):
 
         # Verify it started and stopped
         assert monitor._running is False  # Should be stopped by finally block
+
+
+def _health_check_time_sequence():
+    """An always-increasing fake clock for bbwatch.main.time.time.
+
+    Patching time.time() globally means logging's own LogRecord timestamps
+    consume calls too, so the exact number of calls before the code under
+    test reads the clock is not controllable. Instead of pinning specific
+    values, each call advances by a fixed 6s step: last_health_check is
+    read once before the loop, then re-read ~2 calls later inside the
+    first iteration (now_hb, now) — a 12s gap that reliably clears the
+    10s health-check threshold regardless of how many logging calls fall
+    in between.
+    """
+    value = 0.0
+    while True:
+        yield value
+        value += 6.0
+
+
+class TestHealthCheck:
+    """The main loop's throttled health check is the only thing that
+    surfaces a dead capture thread or stalled motion detector — a silent
+    failure here means bbwatch looks fine while not actually monitoring.
+    """
+
+    def test_logs_error_when_motion_detector_unhealthy(self, monitor, mock_components, log_capture):
+        monitor.config.fake_hardware = True
+        mock_components["motion"].return_value.get_current_motion.return_value = 0.0
+        mock_components["motion"].return_value.is_healthy.return_value = False
+        mock_components["motion"].return_value.last_frame_age_s.return_value = 42.0
+
+        # Force the throttled health-check branch (now - last_health_check >= 10.0)
+        # to run on the very first loop iteration.
+        with patch("bbwatch.main.time.time", side_effect=_health_check_time_sequence()):
+            with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
+                monitor.run()
+
+        messages = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
+        assert any("Motion detector UNHEALTHY" in m and "42.0" in m for m in messages)
+
+    def test_logs_error_when_audio_capture_not_running(self, monitor, mock_components, log_capture):
+        monitor.config.fake_hardware = True
+        mock_components["motion"].return_value.get_current_motion.return_value = 0.0
+        mock_components["motion"].return_value.is_healthy.return_value = True
+        mock_components["capture"].return_value.is_running.return_value = False
+
+        with patch("bbwatch.main.time.time", side_effect=_health_check_time_sequence()):
+            with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
+                monitor.run()
+
+        messages = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
+        assert any("Audio capture UNHEALTHY" in m and "FFmpeg not running" in m for m in messages)
+
+    def test_no_health_error_when_all_components_healthy(self, monitor, mock_components, log_capture):
+        monitor.config.fake_hardware = True
+        mock_components["motion"].return_value.get_current_motion.return_value = 0.0
+        mock_components["motion"].return_value.is_healthy.return_value = True
+        mock_components["capture"].return_value.is_running.return_value = True
+
+        with patch("bbwatch.main.time.time", side_effect=_health_check_time_sequence()):
+            with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
+                monitor.run()
+
+        messages = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
+        assert not any("UNHEALTHY" in m for m in messages)
