@@ -78,11 +78,61 @@ class TestCropRoi:
         motion_detector.zoom = 2.0
         mock_cv2.cvtColor.side_effect = lambda img, _: np.zeros(img.shape[:2], dtype=np.uint8)
         mock_cv2.GaussianBlur.side_effect = lambda img, *a, **k: img
-        frame = self._frame(h=100, w=200)
+        frame = self._frame(h=100, w=200)  # crop (100x50) stays below process_width=640 -> no resize
 
         motion_detector.process_frame(frame)
 
         assert motion_detector._prev_gray.shape == (50, 100)
+
+
+class TestResizeForProcessing:
+    """process_width bounds CPU cost of the (post-crop) analysis frame.
+
+    Real cv2 (not mocked): this is a thin wrapper around cv2.resize and the
+    interesting behavior is the actual output shape/no-op threshold.
+    """
+
+    def _frame(self, h: int, w: int) -> np.ndarray:
+        return np.zeros((h, w, 3), dtype=np.uint8)
+
+    def test_noop_when_within_budget(self):
+        detector = MotionDetector(process_width=640)
+        frame = self._frame(h=480, w=640)
+
+        result = detector._resize_for_processing(frame)
+
+        assert result is frame
+
+    def test_never_upscales(self):
+        detector = MotionDetector(process_width=1920)
+        frame = self._frame(h=480, w=640)
+
+        result = detector._resize_for_processing(frame)
+
+        assert result is frame
+
+    def test_downscales_preserving_aspect_ratio(self):
+        detector = MotionDetector(process_width=640)
+        frame = self._frame(h=1080, w=1920)  # 16:9
+
+        result = detector._resize_for_processing(frame)
+
+        assert result.shape[:2] == (360, 640)  # 1080 * 640/1920 = 360
+
+    def test_crop_then_resize_preserves_native_detail_before_downscale(self):
+        """The point of the whole pipeline: zoom crops native pixels, THEN
+        the crop (not the full frame) is downscaled to the CPU budget —
+        so a zoomed ROI keeps far more real detail than cropping an
+        already-downscaled frame would.
+        """
+        detector = MotionDetector(zoom=2.0, process_width=640)
+        native_1080p = self._frame(h=1080, w=1920)
+
+        cropped = detector._crop_roi(native_1080p)
+        assert cropped.shape[:2] == (540, 960)  # native crop, full detail
+
+        final = detector._resize_for_processing(cropped)
+        assert final.shape[:2] == (360, 640)  # 540 * 640/960 = 360
 
 
 def test_initialization_string_index():

@@ -33,6 +33,7 @@ class MotionDetector:
         zoom: float = 1.0,
         offset_x: float = 0.0,
         offset_y: float = 0.0,
+        process_width: int = 640,
         latency_report_interval_s: float = 10.0,
     ) -> None:
         """Initialize motion detector.
@@ -46,10 +47,17 @@ class MotionDetector:
             dilation_iterations: Number of dilation iterations for morphology.
             fps: Target frame rate for motion detection.
             zoom: Crop factor for the analysis ROI (1.0 = full frame, 2.0 =
-                center half width/height). Same absolute movement covers a
-                larger fraction of a smaller ROI, raising effective sensitivity.
+                center half width/height), applied to the native-resolution
+                frame. Same absolute movement covers a larger fraction of a
+                smaller ROI, raising effective sensitivity — and cropping
+                before any downscale preserves the sensor detail zoom exists
+                to exploit, rather than cropping an already-degraded frame.
             offset_x: Horizontal crop offset, -1 (left) .. 1 (right), 0 = centered.
             offset_y: Vertical crop offset, -1 (top) .. 1 (bottom), 0 = centered.
+            process_width: Max width of the analysis frame *after* cropping —
+                bounds per-frame CPU cost independent of zoom/source
+                resolution. The crop is downscaled to this width only if
+                larger; never upscaled.
             latency_report_interval_s: Seconds between latency summaries.
         """
         self.device_index = device_index
@@ -61,6 +69,7 @@ class MotionDetector:
         self.zoom = zoom
         self.offset_x = offset_x
         self.offset_y = offset_y
+        self.process_width = process_width
         self.frame_delay = 1.0 / fps  # Pre-calculate sleep time
 
         self._prev_gray: np.ndarray | None = None
@@ -103,6 +112,18 @@ class MotionDetector:
 
         return frame[y : y + crop_h, x : x + crop_w]
 
+    def _resize_for_processing(self, frame: np.ndarray) -> np.ndarray:
+        """Downscale to process_width if the (post-crop) frame is larger.
+
+        Never upscales. INTER_AREA is the correct choice for shrinking —
+        it averages source pixels instead of sampling/interpolating.
+        """
+        h, w = frame.shape[:2]
+        if w <= self.process_width:
+            return frame
+        new_h = max(1, int(h * self.process_width / w))
+        return cv2.resize(frame, (self.process_width, new_h), interpolation=cv2.INTER_AREA)
+
     def process_frame(self, frame: np.ndarray) -> tuple[float, bool]:
         """Process a single frame for motion.
 
@@ -113,6 +134,7 @@ class MotionDetector:
             Tuple of (motion_percentage, is_motion_detected).
         """
         frame = self._crop_roi(frame)
+        frame = self._resize_for_processing(frame)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (self.blur_size, self.blur_size), 0)
 
@@ -239,9 +261,12 @@ class MotionDetector:
                         continue
 
                     LOGGER.info(f"Video device {self.device_index} opened")
-                    # Low resolution + minimal buffer for performance/freshness
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    # Decode at native resolution — do NOT downscale here.
+                    # zoom crops the ROI from the full-resolution frame in
+                    # process_frame(); downscaling before crop would throw
+                    # away exactly the detail zoom is meant to preserve.
+                    # process_width (applied post-crop) is what bounds
+                    # per-frame CPU cost instead.
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
                 ret, frame = cap.read()
