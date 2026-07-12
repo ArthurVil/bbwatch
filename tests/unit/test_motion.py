@@ -301,6 +301,38 @@ def test_is_healthy_reflects_thread_and_frame_freshness(motion_detector):
     assert motion_detector.is_healthy() is False
 
 
+class TestOpenCapture:
+    """RTSP sources must bound network I/O; local devices open plainly."""
+
+    def test_rtsp_url_uses_ffmpeg_backend_with_timeouts(self, mock_cv2):
+        """Failure path: without open/read timeouts a hung RTSP stream
+        blocks cap.read() indefinitely, outliving stop()'s join timeout.
+        """
+        detector = MotionDetector(device_index="rtsp://cam.local:8554/raw_video")
+
+        detector._open_capture()
+
+        mock_cv2.VideoCapture.assert_called_once_with(
+            "rtsp://cam.local:8554/raw_video",
+            mock_cv2.CAP_FFMPEG,
+            [mock_cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, mock_cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000],
+        )
+
+    def test_local_device_index_opens_without_extra_params(self, mock_cv2):
+        detector = MotionDetector(device_index=0)
+
+        detector._open_capture()
+
+        mock_cv2.VideoCapture.assert_called_once_with(0)
+
+    def test_local_device_path_opens_without_extra_params(self, mock_cv2):
+        detector = MotionDetector(device_index="/dev/video0")
+
+        detector._open_capture()
+
+        mock_cv2.VideoCapture.assert_called_once_with("/dev/video0")
+
+
 def test_start_stop(motion_detector, mock_cv2):
     # Mock threading
     with patch("threading.Thread") as mock_thread:
