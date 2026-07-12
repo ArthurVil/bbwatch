@@ -32,13 +32,22 @@ streams:
   # Composite with the dynamic overlay FIFO written by the bbwatch container.
   # The FIFO path is the host bind mount of the container's /app/data.
   # -framerate 15 MUST match alerts.overlay_fps in config.yaml.
+  #
+  # -fps_mode drop -r 15: this ffmpeg process runs for as long as go2rtc
+  # keeps it alive (hours, across many viewers) doing 1080p decode + overlay
+  # + libx264 encode on one core near its realtime budget. Without an
+  # explicit frame-rate policy, ffmpeg queues every frame it's given; any
+  # transient slowdown (thermal, CPU contention) then leaves the output
+  # permanently behind and glass-to-glass latency creeps upward and never
+  # recovers. `drop` forces ffmpeg to discard frames it can't encode in
+  # time instead of queueing them, bounding the backlog.
   babycam:
     - "exec:ffmpeg -hide_banner -v error \
       -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_video \
       -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_audio \
       -f rawvideo -pixel_format rgba -video_size 1920x1080 -framerate 15 -i /home/kanai/bbwatch/data/overlays/overlay.pipe \
       -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=1' \
-      -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
+      -fps_mode drop -r 15 -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
       -c:a copy \
       -f rtsp {output}"
 

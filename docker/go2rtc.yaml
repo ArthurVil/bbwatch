@@ -17,7 +17,7 @@ streams:
       -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_audio \
       -f rawvideo -pixel_format rgba -video_size 640x480 -framerate 15 -i /app/data/overlays/overlay.pipe \
       -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=1' \
-      -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
+      -fps_mode drop -r 15 -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
       -c:a copy \
       -f rtsp {output}"
 
