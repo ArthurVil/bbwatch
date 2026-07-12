@@ -76,6 +76,8 @@ class MotionDetector:
         self._current_motion: float = 0.0
         self._motion_history: deque[float] = deque(maxlen=history_len)
         self._lock = Lock()
+        # Fixed 3x3 dilate kernel — built once instead of every process_frame() call.
+        self._dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
 
         # Liveness: timestamp of the last successfully captured frame.
         # None until the first frame arrives. Read by is_healthy().
@@ -148,12 +150,11 @@ class MotionDetector:
             _, thresh = cv2.threshold(frame_diff, self.threshold, 255, cv2.THRESH_BINARY)
 
             # Dilate to fill gaps
-            # Use default 3x3 kernel explicitly for mypy compatibility
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-            thresh = cv2.dilate(thresh, kernel, iterations=self.dilation_iterations)
+            thresh = cv2.dilate(thresh, self._dilate_kernel, iterations=self.dilation_iterations)
 
-            # Calculate percentage
-            motion_pixels = np.sum(thresh > 0)
+            # Calculate percentage. cv2.countNonZero avoids allocating a
+            # full-frame boolean array just to sum it (np.sum(thresh > 0)).
+            motion_pixels = cv2.countNonZero(thresh)
             total_pixels = thresh.shape[0] * thresh.shape[1]
             motion_percent = float((motion_pixels / total_pixels) * 100)
 
