@@ -129,7 +129,6 @@ def get_alert_state(status_file: Path, health_timeout_s: float = 10.0) -> str:
     # Check system health
     timestamp = status.get("timestamp", 0)
     if time.time() - timestamp > health_timeout_s:
-        LOGGER.warning("Status file stale - system may be unhealthy")
         return ALERT_ERROR
 
     system_status = status.get("system_status", "unknown")
@@ -243,7 +242,8 @@ class OverlayController:
         )
 
         if new_state != self._current_state:
-            LOGGER.info(f"Overlay state changed: {self._current_state} -> {new_state}")
+            log = LOGGER.warning if new_state == ALERT_ERROR else LOGGER.info
+            log(f"Overlay state changed: {self._current_state} -> {new_state}")
             self._current_state = new_state
 
         return new_state

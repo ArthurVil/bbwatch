@@ -99,6 +99,64 @@ class TestAlertManager:
         assert data["alert_state"] == "triggered"
         assert data["intensity"] == 0.12
 
+    def test_heartbeat_refreshes_status_without_changing_state(self, manager, config):
+        """heartbeat() must update the timestamp but never alter alert state.
+
+        Regression: status.json was only written from process_intensity(),
+        so a deployment with no audio source (camera-only) never refreshed
+        it and looked permanently unhealthy after health_timeout_s. The main
+        loop calls heartbeat() independently of audio activity.
+        """
+        manager.process_intensity(0.02)  # establish IDLE baseline, intensity 0.02
+        first = json.loads(config.status_file.read_text())
+
+        with patch("bbwatch.alert.time.time", return_value=first["timestamp"] + 5.0):
+            status = manager.heartbeat()
+
+        assert status.alert_state == first["alert_state"]
+        assert status.intensity == first["intensity"] == 0.02
+        assert status.timestamp == first["timestamp"] + 5.0
+
+        second = json.loads(config.status_file.read_text())
+        assert second["timestamp"] == first["timestamp"] + 5.0
+        assert manager.current_state == AlertState.IDLE  # unchanged
+
+    def test_heartbeat_and_process_intensity_writes_do_not_corrupt_status_file(self, manager, config):
+        """Concurrent writers (main loop heartbeat + watchdog observer thread)
+        must not interleave and corrupt status.json.
+        """
+        import threading
+
+        stop = threading.Event()
+        errors = []
+
+        def hammer_heartbeat() -> None:
+            while not stop.is_set():
+                try:
+                    manager.heartbeat()
+                except Exception as e:  # noqa: BLE001 - captured for assertion
+                    errors.append(e)
+
+        def hammer_process() -> None:
+            while not stop.is_set():
+                try:
+                    manager.process_intensity(0.01)
+                except Exception as e:  # noqa: BLE001 - captured for assertion
+                    errors.append(e)
+
+        threads = [threading.Thread(target=hammer_heartbeat), threading.Thread(target=hammer_process)]
+        for t in threads:
+            t.start()
+        time.sleep(0.2)
+        stop.set()
+        for t in threads:
+            t.join(timeout=2.0)
+
+        assert errors == []
+        # File must always be valid, complete JSON — never a torn write.
+        data = json.loads(config.status_file.read_text())
+        assert "timestamp" in data and "alert_state" in data
+
     def test_recording_starts_on_trigger(self, manager, recorder):
         """Recording should start when alert is triggered."""
         manager.process_intensity(0.12)

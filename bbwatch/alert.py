@@ -60,6 +60,11 @@ class AlertManager:
         self._current_intensity = 0.0
         self._last_latency_ms: float | None = None
         self._recorder: Recorder = recorder if recorder is not None else FFmpegRecorder(config.stream_url)
+        # Guards status.json writes: process_intensity() runs on the watchdog
+        # observer thread, heartbeat() on the main loop thread. Both write to
+        # the same fixed temp-file path — without a lock, concurrent writes
+        # could interleave or race the rename.
+        self._status_lock = threading.Lock()
 
         # Pre-create output directories
         self.config.screenshots_dir.mkdir(parents=True, exist_ok=True)
@@ -121,17 +126,34 @@ class AlertManager:
             elif now - self._cooldown_start_time > self.config.cooldown_s:
                 self._transition_to(AlertState.IDLE, now, intensity)
 
-        # Write status file for overlay controller
-        status = AlertStatus(
+        status = self._current_status(now)
+        self._write_status(status)
+        return status
+
+    def heartbeat(self) -> AlertStatus:
+        """Refresh status.json's timestamp without changing alert state.
+
+        status.json is the overlay/health-check's sole liveness signal
+        (`bbwatch.overlay.get_alert_state`). It used to be written only from
+        `process_intensity`, so a deployment with audio disabled (camera-only)
+        never updated it — the system looked permanently "unhealthy" after
+        `health_timeout_s` even though it was working correctly. The main
+        loop calls this periodically so liveness reflects the process, not
+        audio activity specifically.
+        """
+        status = self._current_status(time.time())
+        self._write_status(status)
+        return status
+
+    def _current_status(self, now: float) -> AlertStatus:
+        """Build the status snapshot written to status.json."""
+        return AlertStatus(
             system_status="ok",
             alert_state=self._state.value,
             alert_active=(self._state == AlertState.TRIGGERED),
             timestamp=now,
-            intensity=intensity,
+            intensity=self._current_intensity,
         )
-        self._write_status(status)
-
-        return status
 
     def _transition_to(self, new_state: AlertState, now: float, intensity: float) -> None:
         """Handle state transition side effects."""
@@ -154,9 +176,10 @@ class AlertManager:
         """Write status to JSON file."""
         try:
             temp_file = self.config.status_file.with_suffix(".tmp")
-            with open(temp_file, "w") as f:
-                json.dump(asdict(status), f)
-            temp_file.replace(self.config.status_file)
+            with self._status_lock:
+                with open(temp_file, "w") as f:
+                    json.dump(asdict(status), f)
+                temp_file.replace(self.config.status_file)
         except OSError as e:
             LOGGER.error(f"Failed to write status file: {e}")
 

@@ -339,7 +339,18 @@ class BabyMonitor:
             self.start()
 
             last_health_check = time.time()
+            last_heartbeat = 0.0
             while self._running:
+                # Heartbeat status.json so liveness reflects the process being
+                # alive, not audio activity specifically — otherwise a
+                # camera-only deployment (no audio source) reads as
+                # permanently unhealthy once health_timeout_s elapses.
+                # Throttled: this is a disk write, not free at 20Hz.
+                now_hb = time.time()
+                if self._alert_manager is not None and now_hb - last_heartbeat >= 1.0:
+                    last_heartbeat = now_hb
+                    self._alert_manager.heartbeat()
+
                 # Update legacy overlay logic (file linking)
                 if self._overlay_controller is not None:
                     self._overlay_controller.update()
