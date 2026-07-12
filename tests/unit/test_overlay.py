@@ -1,7 +1,8 @@
 import threading
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from bbwatch.overlay_generator import OverlayGenerator
@@ -56,12 +57,20 @@ def test_update_state(overlay_generator):
 
 
 def test_generate_frame_calls_cv2(overlay_generator, mock_cv2):
-    # Setup mock return for cvtColor
-    mock_cv2.cvtColor.return_value = MagicMock(tobytes=lambda: b"fake_bytes")
+    """generate_frame returns a raw RGBA array — no BGRA conversion pass.
 
-    frame_bytes = overlay_generator.generate_frame()
+    Regression: colors are defined in RGBA directly (see COLOR_* constants)
+    specifically so no cv2.cvtColor call over the full canvas is needed;
+    this test would catch that call being reintroduced only indirectly
+    (via the returned type), so it's paired with an explicit assertion
+    that cv2.cvtColor is never called.
+    """
+    frame = overlay_generator.generate_frame()
 
-    assert frame_bytes == b"fake_bytes"
+    assert isinstance(frame, np.ndarray)
+    assert frame.shape == (480, 640, 4)
+    assert frame.dtype == np.uint8
+    mock_cv2.cvtColor.assert_not_called()
     mock_cv2.putText.assert_called()  # Check that text is drawn (timestamp, info)
 
     # Check that polylines are called (plot)
@@ -99,7 +108,6 @@ def test_run_loop_writes_to_pipe(overlay_generator, mock_cv2):
     wrong-list unpack in run_loop passes undetected.
     """
     fake_fd = 42
-    mock_cv2.cvtColor.return_value = MagicMock(tobytes=lambda: b"data")
 
     written = []
 
@@ -120,7 +128,13 @@ def test_run_loop_writes_to_pipe(overlay_generator, mock_cv2):
         overlay_generator.run_loop()
 
     assert len(written) == 1
-    assert written[0] == (fake_fd, b"data")
+    fd, data = written[0]
+    assert fd == fake_fd
+    # cv2 drawing calls are mocked (no-op), so the canvas stays a blank,
+    # zeroed 640x480 RGBA frame — this pins the byte count _write_frame
+    # must push through the FIFO regardless of drawn content.
+    assert len(data) == 640 * 480 * 4
+    assert data == b"\x00" * (640 * 480 * 4)
 
 
 @pytest.mark.slow
