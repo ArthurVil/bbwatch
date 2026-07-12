@@ -36,9 +36,15 @@ motion:
   threshold: 10                      # Pixel difference threshold (1-255): lower = more sensitive
   blur_size: 5                       # Gaussian blur kernel size (must be odd): higher = less noise
   dilation_iterations: 1             # Morphology iterations to fill gaps (0-10): higher = larger motion blobs
-  motion_threshold_percent: 10.0     # % of changed pixels to trigger (0.1-50): lower = more sensitive
+  motion_threshold_percent: 5.0     # % of changed pixels to trigger (0.1-50): lower = more sensitive
   history_len: 10                    # Motion history buffer size (10-1000)
   fps: 15                            # Motion detection frame rate (1-30): higher = more responsive
+  # Crop the analysis ROI before diffing. Same absolute movement covers a
+  # larger fraction of a smaller ROI, so cropping to the crib/bed area also
+  # raises effective sensitivity there without touching the threshold knobs.
+  # zoom: 2.0                        # 1.0 = full frame, 2.0 = center 50% width/height, etc.
+  # offset_x: 0.0                    # -1 (left edge) .. 1 (right edge), 0 = centered
+  # offset_y: 0.0                    # -1 (top edge) .. 1 (bottom edge), 0 = centered
 
 # Runtime options
 log_level: INFO

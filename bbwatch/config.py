@@ -141,6 +141,17 @@ class MotionConfig(StrictModel):
     history_len: int = Field(default=100, ge=1, le=1000, description="Motion history buffer size")
     fps: int = Field(default=10, ge=1, le=30, description="Motion detection frame rate")
 
+    # Region of interest (crop before analysis)
+    zoom: float = Field(
+        default=1.0, ge=1.0, le=10.0, description="Crop factor for the analysis ROI (1.0=full frame, 2.0=center 50%)"
+    )
+    offset_x: float = Field(
+        default=0.0, ge=-1.0, le=1.0, description="Horizontal ROI offset: -1=left edge, 0=centered, 1=right edge"
+    )
+    offset_y: float = Field(
+        default=0.0, ge=-1.0, le=1.0, description="Vertical ROI offset: -1=top edge, 0=centered, 1=bottom edge"
+    )
+
     # Video input
     stream_url: str = Field(
         default="",

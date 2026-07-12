@@ -30,6 +30,9 @@ class MotionDetector:
         motion_threshold_percent: float = 1.0,
         dilation_iterations: int = 2,
         fps: int = 10,
+        zoom: float = 1.0,
+        offset_x: float = 0.0,
+        offset_y: float = 0.0,
         latency_report_interval_s: float = 10.0,
     ) -> None:
         """Initialize motion detector.
@@ -42,6 +45,11 @@ class MotionDetector:
             motion_threshold_percent: Motion percentage to trigger detection.
             dilation_iterations: Number of dilation iterations for morphology.
             fps: Target frame rate for motion detection.
+            zoom: Crop factor for the analysis ROI (1.0 = full frame, 2.0 =
+                center half width/height). Same absolute movement covers a
+                larger fraction of a smaller ROI, raising effective sensitivity.
+            offset_x: Horizontal crop offset, -1 (left) .. 1 (right), 0 = centered.
+            offset_y: Vertical crop offset, -1 (top) .. 1 (bottom), 0 = centered.
             latency_report_interval_s: Seconds between latency summaries.
         """
         self.device_index = device_index
@@ -50,6 +58,9 @@ class MotionDetector:
         self.motion_threshold_percent = motion_threshold_percent
         self.dilation_iterations = dilation_iterations
         self.fps = fps
+        self.zoom = zoom
+        self.offset_x = offset_x
+        self.offset_y = offset_y
         self.frame_delay = 1.0 / fps  # Pre-calculate sleep time
 
         self._prev_gray: np.ndarray | None = None
@@ -67,6 +78,31 @@ class MotionDetector:
         if isinstance(device_index, str) and device_index.isdigit():
             self.device_index = int(device_index)
 
+    def _crop_roi(self, frame: np.ndarray) -> np.ndarray:
+        """Crop the analysis region according to zoom/offset config.
+
+        zoom=1.0 is a no-op (returns frame unchanged). Cropping also
+        shrinks the array processed by cvtColor/blur/diff, lowering
+        per-frame compute proportionally to the zoom factor.
+        """
+        if self.zoom <= 1.0:
+            return frame
+
+        h, w = frame.shape[:2]
+        crop_w = max(1, int(w / self.zoom))
+        crop_h = max(1, int(h / self.zoom))
+        max_x = w - crop_w
+        max_y = h - crop_h
+
+        # offset in [-1, 1] maps linearly across the available margin,
+        # centered (offset=0) in the middle of the frame.
+        x = int((max_x / 2) * (1 + self.offset_x))
+        y = int((max_y / 2) * (1 + self.offset_y))
+        x = max(0, min(x, max_x))
+        y = max(0, min(y, max_y))
+
+        return frame[y : y + crop_h, x : x + crop_w]
+
     def process_frame(self, frame: np.ndarray) -> tuple[float, bool]:
         """Process a single frame for motion.
 
@@ -76,6 +112,7 @@ class MotionDetector:
         Returns:
             Tuple of (motion_percentage, is_motion_detected).
         """
+        frame = self._crop_roi(frame)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (self.blur_size, self.blur_size), 0)
 
