@@ -231,6 +231,19 @@ class BabyMonitor:
                 process_width=self.config.motion.process_width,
                 latency_report_interval_s=self.config.latency_report_interval_s,
             )
+            # zoom/offset/process_width have no effect on the video anyone
+            # watches — only on the ROI MotionDetector analyzes internally.
+            # Log the resolved values explicitly so a config change (or the
+            # lack of one) is verifiable without reading source or attaching
+            # a debugger.
+            if self.config.motion.zoom > 1.0:
+                LOGGER.info(
+                    f"Motion ROI: zoom={self.config.motion.zoom} offset_x={self.config.motion.offset_x} "
+                    f"offset_y={self.config.motion.offset_y} process_width={self.config.motion.process_width} "
+                    "(crops the analysis region only — does not change the streamed video)"
+                )
+            else:
+                LOGGER.info("Motion ROI: zoom=1.0 (full frame, no crop)")
 
         # Overlay Generator
         overlay_pipe = self.config.data_dir / "overlays/overlay.pipe"
