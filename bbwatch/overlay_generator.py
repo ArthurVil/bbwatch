@@ -14,9 +14,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
 from bbwatch.latency import LatencyTracker, StageTimer
 
@@ -92,19 +90,6 @@ class OverlayGenerator:
         self._state = OverlayState(False, False, 0.0, 0.0)
         self._lock = threading.Lock()
 
-        # Plotting resources
-        self.fig, self.ax = plt.subplots(figsize=(3, 1), dpi=100)
-        self.canvas = FigureCanvas(self.fig)
-        self._setup_plot()
-
-    def _setup_plot(self) -> None:
-        """Configure matplotlib figure."""
-        self.fig.patch.set_alpha(0.5)  # Transparent figure background
-        self.ax.patch.set_alpha(0.0)  # Transparent axis background
-        self.ax.set_ylim(0, 100)
-        self.ax.axis("off")  # Hide axes
-        self.fig.tight_layout(pad=0)
-
     def update_state(
         self,
         motion_detected: bool,
@@ -138,15 +123,6 @@ class OverlayGenerator:
 
         # Transparent: Normal
         return self.COLOR_TRANSPARENT
-
-    def _generate_plot_image(self) -> np.ndarray:
-        """Generate plot image using matplotlib."""
-        # ... logic unchanged as this method is unused/deprecated in favor of cv2 ...
-        self.ax.clear()
-        self.ax.axis("off")
-        self.ax.set_ylim(0, 100)
-        # ... keeping implementation minimal or just returning empty if unused
-        return np.zeros((self.height, self.width, 4), dtype=np.uint8)
 
     def _draw_plot_cv2(self, img: np.ndarray) -> None:
         """Draw plot using OpenCV (Faster/Simpler fallback)."""
