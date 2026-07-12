@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test lint format clean docker-build docker-test docker-demo docker-demo-video docker-demo-motion docker-shell docker-build-rpi devices up down logs restart
+.PHONY: help install install-dev test lint format clean docker-build docker-test docker-demo docker-demo-video docker-demo-motion docker-shell docker-build-rpi devices up down stop logs restart
 
 # Export host variables from config.yaml for docker-compose
 ifneq ("$(wildcard config.yaml)","")
@@ -83,6 +83,18 @@ up:
 
 down:
 	docker compose -f docker/docker-compose.yml down
+
+# Stop everything, including host-native go2rtc (deploy/go2rtc.service),
+# to fully free RPi5 CPU/thermal headroom. Safe to no-op where go2rtc
+# isn't installed as a systemd service (e.g. x86 dev machines).
+stop:
+	docker compose -f docker/docker-compose.yml down
+	@if systemctl list-unit-files go2rtc.service >/dev/null 2>&1; then \
+		sudo systemctl stop go2rtc; \
+		echo "go2rtc stopped."; \
+	else \
+		echo "go2rtc.service not installed on this host — nothing to stop."; \
+	fi
 
 logs:
 	docker compose -f docker/docker-compose.yml logs -f
