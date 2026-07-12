@@ -49,19 +49,24 @@ services:
   # go2rtc runs natively on the host (deploy/go2rtc-host.yaml +
   # deploy/go2rtc.service): the CSI camera needs the host libcamera stack,
   # which no stock go2rtc image provides. The go2rtc host comes from
-  # RPI_HOST in docker/.env (compose reads .env from this file's directory,
-  # not the repo root) — with rootless Docker neither
+  # RPI_HOST in the repo-root .env — with rootless Docker neither
   # localhost nor host-gateway reaches the real host, only its LAN IP.
   # The overlay FIFO is shared via the ../data bind mount go2rtc reads.
   bbwatch:
     build:
       context: ..
-      # Set BBWATCH_DOCKERFILE=Dockerfile.rpi in docker/.env on the Pi for the
-      # slim runtime-only image (no dev/test tooling); default stays the dev
-      # image for local work. Source is bind-mounted either way, so git pull
-      # still deploys code without a rebuild.
+      # Dockerfile.dev (default) for x86 dev; set BBWATCH_DOCKERFILE=Dockerfile.rpi
+      # in docker/.env on the Pi for the slim runtime-only image.
       dockerfile: docker/${BBWATCH_DOCKERFILE:-Dockerfile.dev}
     network_mode: host
+    # Run as container root: under rootless Docker this maps to the host user,
+    # which owns the bind mounts (the rpi image's non-root user cannot write them).
+    user: "0:0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
     volumes:
       - ..:/app
       - ../data:/app/data
