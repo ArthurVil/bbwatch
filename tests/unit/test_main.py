@@ -1,9 +1,34 @@
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from bbwatch.main import BabyMonitor
+
+
+@pytest.fixture
+def log_capture():
+    """Capture __main__/bbwatch.main records with a plain handler.
+
+    pytest's caplog fixture is unreliable in this environment (third-party
+    pytest plugins interfere with the logging plugin) — see
+    tests/unit/test_latency.py for the same workaround.
+    """
+    records: list[logging.LogRecord] = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("bbwatch.main")
+    handler = _Collector(level=logging.DEBUG)
+    old_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    yield records
+    logger.removeHandler(handler)
+    logger.setLevel(old_level)
 
 
 @pytest.fixture
@@ -48,6 +73,7 @@ def monitor(mock_components, tmp_path):
         config_inst.log_level = "INFO"
         config_inst.fake_hardware = True  # Default to fake hardware to bypass detection logic complexities
         config_inst.motion.motion_threshold_percent = 5.0  # Float value for comparisons
+        config_inst.motion.zoom = 1.0  # Float value for comparisons (Motion ROI startup log)
         config_inst.motion.stream_url = ""  # Real default: derive from audio URL (a bare MagicMock is truthy)
         config_inst.watchdog.enabled = False
 
@@ -184,6 +210,53 @@ def test_start_video_only_disables_cry_detection(monitor, mock_components):
     assert monitor._observer is None
     assert monitor._motion_detector is not None
     monitor.stop()
+
+
+def test_start_logs_resolved_motion_roi(monitor, mock_components, log_capture):
+    """zoom/offset never change the streamed video — only what MotionDetector
+    analyzes internally. Regression: a config change (or the lack of one)
+    must be verifiable from the logs without reading source or attaching a
+    debugger, since there is no other observable signal for this setting.
+    """
+    monitor.config.fake_hardware = False
+    monitor.config.audio.device_index = 0  # Local, not RTSP
+    monitor.config.motion.zoom = 2.0
+    monitor.config.motion.offset_x = 0.25
+    monitor.config.motion.offset_y = -0.5
+    monitor.config.motion.process_width = 640
+
+    video_source = MagicMock()
+    video_source.open.return_value = "rtsp://localhost:8554/raw_video"
+
+    with (
+        patch.object(monitor, "_discover_audio_sources", return_value=[]),
+        patch.object(monitor, "_discover_video_sources", return_value=[video_source]),
+    ):
+        monitor.start()
+    monitor.stop()
+
+    messages = [r.getMessage() for r in log_capture]
+    assert any("Motion ROI: zoom=2.0" in m and "does not change the streamed video" in m for m in messages)
+
+
+def test_start_logs_full_frame_when_zoom_is_default(monitor, mock_components, log_capture):
+    """zoom=1.0 (the default/no-op) gets its own clear log line, not silence."""
+    monitor.config.fake_hardware = False
+    monitor.config.audio.device_index = 0  # Local, not RTSP
+    monitor.config.motion.zoom = 1.0
+
+    video_source = MagicMock()
+    video_source.open.return_value = "rtsp://localhost:8554/raw_video"
+
+    with (
+        patch.object(monitor, "_discover_audio_sources", return_value=[]),
+        patch.object(monitor, "_discover_video_sources", return_value=[video_source]),
+    ):
+        monitor.start()
+    monitor.stop()
+
+    messages = [r.getMessage() for r in log_capture]
+    assert any("Motion ROI: zoom=1.0 (full frame, no crop)" in m for m in messages)
 
 
 def test_start_stop_sequence(monitor, mock_components):
