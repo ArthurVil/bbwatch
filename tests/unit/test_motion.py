@@ -33,6 +33,58 @@ def test_initialization(motion_detector):
     assert motion_detector._current_motion == 0.0
 
 
+class TestCropRoi:
+    """zoom/offset determine the analysis ROI cropped from each frame."""
+
+    def _frame(self, h: int = 100, w: int = 200) -> np.ndarray:
+        return np.arange(h * w * 3, dtype=np.uint8).reshape(h, w, 3)
+
+    def test_zoom_one_is_noop(self, motion_detector):
+        frame = self._frame()
+        cropped = motion_detector._crop_roi(frame)
+        assert cropped is frame
+
+    def test_zoom_two_centered_crop_is_half_size_and_centered(self, motion_detector):
+        motion_detector.zoom = 2.0
+        frame = self._frame(h=100, w=200)
+
+        cropped = motion_detector._crop_roi(frame)
+
+        assert cropped.shape[:2] == (50, 100)
+        np.testing.assert_array_equal(cropped, frame[25:75, 50:150])
+
+    def test_offset_shifts_crop_toward_requested_edge(self, motion_detector):
+        motion_detector.zoom = 2.0
+        motion_detector.offset_x = 1.0  # full right
+        motion_detector.offset_y = -1.0  # full top
+        frame = self._frame(h=100, w=200)
+
+        cropped = motion_detector._crop_roi(frame)
+
+        # max_x = 200-100=100, max_y = 100-50=50; offset=+1/-1 -> x=100, y=0
+        np.testing.assert_array_equal(cropped, frame[0:50, 100:200])
+
+    def test_offset_is_clamped_within_frame_bounds(self, motion_detector):
+        motion_detector.zoom = 2.0
+        motion_detector.offset_x = 5.0  # out of the [-1,1] contract; must still clamp safely
+        frame = self._frame(h=100, w=200)
+
+        cropped = motion_detector._crop_roi(frame)
+
+        assert cropped.shape[:2] == (50, 100)
+        np.testing.assert_array_equal(cropped, frame[25:75, 100:200])
+
+    def test_process_frame_uses_cropped_dimensions(self, motion_detector, mock_cv2):
+        motion_detector.zoom = 2.0
+        mock_cv2.cvtColor.side_effect = lambda img, _: np.zeros(img.shape[:2], dtype=np.uint8)
+        mock_cv2.GaussianBlur.side_effect = lambda img, *a, **k: img
+        frame = self._frame(h=100, w=200)
+
+        motion_detector.process_frame(frame)
+
+        assert motion_detector._prev_gray.shape == (50, 100)
+
+
 def test_initialization_string_index():
     detector = MotionDetector(device_index="1")
     assert detector.device_index == 1
