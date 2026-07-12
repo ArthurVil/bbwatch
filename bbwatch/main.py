@@ -228,6 +228,7 @@ class BabyMonitor:
                 zoom=self.config.motion.zoom,
                 offset_x=self.config.motion.offset_x,
                 offset_y=self.config.motion.offset_y,
+                process_width=self.config.motion.process_width,
                 latency_report_interval_s=self.config.latency_report_interval_s,
             )
 

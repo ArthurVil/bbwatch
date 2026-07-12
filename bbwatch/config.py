@@ -151,6 +151,12 @@ class MotionConfig(StrictModel):
     offset_y: float = Field(
         default=0.0, ge=-1.0, le=1.0, description="Vertical ROI offset: -1=top edge, 0=centered, 1=bottom edge"
     )
+    process_width: int = Field(
+        default=640,
+        ge=160,
+        le=1920,
+        description="Max analysis frame width after cropping; bounds CPU cost independent of zoom/source resolution",
+    )
 
     # Video input
     stream_url: str = Field(
