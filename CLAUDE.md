@@ -60,21 +60,22 @@ USB Cam → go2rtc ← overlay pipe ← OverlayGenerator ← MotionDetector
 
 | Module | Role |
 |---|---|
-| `main.py` | `BabyMonitor` orchestrator — wires all components, owns the 20Hz main loop |
+| `main.py` | `BabyMonitor` orchestrator — wires all components, owns the 20Hz main loop; periodically calls `AlertManager.heartbeat()` and polls component `is_healthy()`/`is_running()` for the loud-failure watchdog checks |
 | `config.py` | Pydantic models (`BBWatchConfig`) loaded from `config.yaml`; env-var overrides via `BBWATCH_` prefix |
 | `sources.py` | `AudioSource`/`VideoSource` Protocols + implementations (ALSA, RTSP, V4L2, RPiCamera, Mock) |
 | `hardware_detector.py` | `HardwareDetector` — discovers ALSA, V4L2, and Pi Camera devices |
 | `hardware.py` | `AudioDevice`/`VideoDevice` dataclasses + output-parsing regexes shared by the detector |
 | `capture.py` | `SlidingWindowCapture` — records overlapping WAV segments via FFmpeg or ALSA |
 | `detector.py` | `SegmentHandler` (watchdog event handler) + DSP pipeline: Butterworth bandpass → RMS → `DetectionResult` |
-| `alert.py` | `AlertManager` — hysteresis state machine (trigger_high / trigger_low + cooldown); triggers clip recording and screenshot capture on alert |
+| `alert.py` | `AlertManager` — hysteresis state machine (trigger_high / trigger_low + cooldown); triggers clip recording and screenshot capture on alert; `heartbeat()` refreshes `status.json` liveness independent of audio activity so camera-only deployments don't read as unhealthy |
 | `recording.py` | `Recorder` Protocol + `FFmpegRecorder` — captures frames/clips from the RTSP stream |
-| `motion.py` | `MotionDetector` — background thread reading RTSP/V4L2 frames, computes changed-pixel ratio |
+| `motion.py` | `MotionDetector` — background thread reading RTSP/V4L2 frames, computes changed-pixel ratio; optional `zoom`/`offset_x`/`offset_y` crop the analysis ROI (before downscale) to raise effective sensitivity without affecting the streamed video |
 | `overlay_generator.py` | `OverlayGenerator` — background thread rendering matplotlib frames into a named pipe at `overlay_fps` |
 | `overlay.py` | `OverlayController` — legacy file-symlink overlay (static images); still used for health-check status |
 | `watchdog.py` | `StreamWatchdog` — background thread polling go2rtc REST API; alerts when all viewers disconnect |
 | `notifier.py` | `Notifier` Protocol + `NtfyNotifier` — push notifications for the watchdog |
 | `storage.py` | `StorageManager` — background thread enforcing `max_size_mb` by deleting oldest WAV segments |
+| `latency.py` | `StageTimer`/`LatencyTracker` — per-pipeline stage timing (pickup/process/etc.); DEBUG per-pass, aggregated INFO summaries on `latency_report_interval_s`; used by `detector.py`, `motion.py`, `overlay_generator.py` |
 
 ### Source selection
 
