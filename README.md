@@ -124,6 +124,10 @@ docker logs -f docker-bbwatch-1
 journalctl -u go2rtc -f
 ```
 
+For day-to-day go2rtc operation (restarting after a config edit, checking
+ports, troubleshooting 404s/crashes), see
+[SETUP_RPI5.md § Operating go2rtc](docs/SETUP_RPI5.md#operating-go2rtc-systemd).
+
 #### Alternative: Run from GHCR (Docker)
 
 If you don't want to build from source, you can pull the pre-built ARM64 image:
