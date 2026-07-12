@@ -91,6 +91,139 @@ bbwatch runs in Docker and reaches the host go2rtc via
 `rtsp://host.docker.internal:8554`; the overlay FIFO is shared through the
 repo's `data/` bind mount that host go2rtc reads.
 
+## Operating go2rtc (systemd)
+
+go2rtc runs as a native systemd unit on the Pi (`/etc/systemd/system/go2rtc.service`,
+installed from `deploy/go2rtc.service`), completely independent of the Docker
+`bbwatch` container. Use standard `systemctl`/`journalctl` for day-to-day
+operation — none of this requires touching Docker.
+
+### Start / stop / restart / status
+
+```bash
+sudo systemctl start go2rtc
+sudo systemctl stop go2rtc
+sudo systemctl restart go2rtc
+sudo systemctl status go2rtc
+```
+
+### Enable / disable at boot
+
+`enable --now` (done once during install, see above) both starts go2rtc
+immediately and makes it start on every boot.
+
+```bash
+sudo systemctl enable go2rtc     # start automatically on boot
+sudo systemctl disable go2rtc    # stop starting on boot (does not stop a running instance)
+```
+
+### Logs
+
+```bash
+journalctl -u go2rtc -f              # follow live
+journalctl -u go2rtc -n 200          # last 200 lines
+journalctl -u go2rtc --since "10 min ago"
+```
+
+`deploy/go2rtc.service` sets `Restart=always`, so a crashing stream (e.g. the
+`rpicam-vid` or `ffmpeg` exec process behind a stream dying) restarts
+automatically within `RestartSec=5`. When troubleshooting, check the ~50-100
+lines around a restart rather than only the very last line — the useful error
+(camera busy, bad device path, missing FIFO reader) usually appears just
+before the restart, not after.
+
+### Check it's listening
+
+```bash
+ss -tlnp | grep -E '8554|1984'
+```
+
+- **`:8554`** — RTSP. Used internally by the `raw_video`/`babycam` composite
+  pipeline and by bbwatch's motion detector; also reachable externally (e.g.
+  `vlc rtsp://<pi-ip>:8554/babycam`).
+- **`:1984`** — go2rtc's HTTP API and built-in web UI (stream viewer, health
+  checks).
+
+If neither port shows up, go2rtc isn't running or crashed on startup — check
+`sudo systemctl status go2rtc` first.
+
+### Editing the config — two separate config surfaces
+
+> [!IMPORTANT]
+> bbwatch's `config.yaml` (Docker side) is bind-mounted into the container —
+> editing it and running `make restart` picks up changes immediately. go2rtc's
+> config at `/etc/go2rtc.yaml` is a **plain copy** installed onto the host
+> filesystem, not bind-mounted from the repo — editing it has **no effect**
+> until you explicitly restart the systemd unit. This asymmetry is the most
+> common cause of "I changed the config but nothing happened."
+
+```bash
+sudo nano /etc/go2rtc.yaml
+sudo systemctl restart go2rtc
+journalctl -u go2rtc -f     # confirm the streams came back up cleanly
+```
+
+If you edit `deploy/go2rtc-host.yaml` in the repo and want it to take effect
+on the Pi, re-copy it over the installed config, then restart:
+
+```bash
+sudo cp deploy/go2rtc-host.yaml /etc/go2rtc.yaml
+sudo systemctl restart go2rtc
+```
+
+### Config variants: with mic vs. video-only
+
+`deploy/go2rtc-host.yaml` ships with a `device_audio` stream (ALSA mic via
+`exec: ffmpeg … -f alsa`) that the `babycam` composite mixes in with `-c:a
+copy`. On a camera-only deployment (no mic wired up, or a deliberate
+video-only setup — see `BBWATCH_AUDIO_SOURCE=disabled` in `docker/.env`,
+described in `docker-compose.yml`), a hand-edited variant may be installed
+instead that drops the `device_audio:` stream entirely and the corresponding
+second `-i` / `-c:a copy` in the `babycam` composite.
+
+To check which variant is currently installed on the Pi:
+
+```bash
+grep -A1 'device_audio:' /etc/go2rtc.yaml
+```
+
+No output means the video-only variant is installed. Keep this in sync with
+the bbwatch side: going video-only in `/etc/go2rtc.yaml` without also setting
+`BBWATCH_AUDIO_SOURCE=disabled` in `docker/.env` leaves bbwatch retrying a
+mic-shaped RTSP audio stream that no longer carries audio.
+
+### Troubleshooting
+
+**Service fails to start, or restarts continuously**
+- Check whether the camera is held by another process: `sudo systemctl stop
+  go2rtc` then run `libcamera-hello --list-cameras` by hand — if that also
+  fails with "Cannot access camera", something else (a stray go2rtc process,
+  a manual `rpicam-vid` test, a leftover container) still holds the lock. Kill
+  it, then restart go2rtc.
+- Verify the `rpicam-vid` binary exists and is on `PATH`: `which rpicam-vid`.
+  `deploy/go2rtc-host.yaml` assumes `rpicam-vid`; older/alternate images may
+  only ship `libcamera-vid`, which needs the stream's `exec:` command updated
+  to match.
+- Read the actual startup error from the journal: `journalctl -u go2rtc -n 100`.
+
+**Stream 404s or is empty in VLC / the web UI**
+- go2rtc surfaces its `exec:` subprocess's stderr as `WRN` log lines — check
+  `journalctl -u go2rtc -n 100` around the time of the failed request for the
+  real ffmpeg/rpicam-vid error (bad device path, unsupported resolution,
+  etc.), not just a generic "stream not found".
+- If specifically the `babycam` composite stream 404s or hangs, confirm the
+  overlay FIFO exists and bbwatch's `OverlayGenerator` is running — go2rtc's
+  ffmpeg process blocks opening the FIFO input until a writer connects (see
+  [CLAUDE.md](../CLAUDE.md) "Key constraints").
+
+**Port already in use**
+- `ss -tlnp | grep -E '8554|1984'` shows what's currently bound. A stray
+  manually-started go2rtc process, or a Docker-based go2rtc left over from
+  before switching to host-native mode, are the usual culprits. If the
+  systemd-managed instance is already up and healthy
+  (`systemctl status go2rtc`), just stop the extra stray process rather than
+  restarting the service.
+
 ## Verification
 
 ### Check device detection
