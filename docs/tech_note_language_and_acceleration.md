@@ -189,7 +189,53 @@ knowing the ceiling isn't the IMX500 alone.
    end-to-end resolution migration. Measured result: load average dropped
    from a 12.33 peak to a steady 2.64; motion `process` stage dropped ~10x;
    see `docs/latency.md`'s 2026-07-12 update for the full before/after.
-2. **Proposed for Phase 3 — bbwatch becomes the video compositor, so `zoom`
+2. **Next up — fix the viewer-facing stream latency drift (multi-hour
+   soak, not the 40s smoke test that validated the last fix).** Reported
+   2026-07-12: cry/motion alerting stays fast (`process` ~0.7ms avg,
+   `frame_age` 40–95ms — both healthy) but the video the user actually
+   watches drifts past 5s of glass-to-glass latency after hours of uptime —
+   the same symptom the `-fps_mode cfr` fix (item 1, and see
+   `docs/latency.md`) was meant to close. A dedicated read-only audit
+   (`workflow-verifier`, 2026-07-12) found three contributing issues, most
+   likely first:
+   - **`-fps_mode cfr` bounds frame *rate*, not wall-clock lag.** It
+     resamples decoded frames to match a target PTS spacing by comparing
+     frames to each other, not to real time — it has no way to detect or
+     correct a *shortfall* (decode+overlay+encode running slightly slower
+     than 15fps on average), only a *surplus*. A small average shortfall,
+     compounded over hours, reproduces exactly the queuing behavior `cfr`
+     was applied to fix. The original validation only ran ~40s
+     (`docs/latency.md`) — far shorter than the hours-long accumulation
+     window of the bug it was meant to catch. Fix direction: an explicit
+     wall-clock-referenced frame-drop policy in the `babycam` ffmpeg
+     pipeline (`deploy/go2rtc-host.yaml`), validated over a multi-hour soak
+     rather than a short smoke test.
+   - **This exact failure mode is completely uninstrumented.** `bbwatch`'s
+     `frame_age` health check (`bbwatch/motion.py`) watches the internal
+     `raw_video` stream `MotionDetector` consumes — a different go2rtc
+     stream/ffmpeg process than `babycam`, the composited stream the user
+     actually watches. `StreamWatchdog` only polls viewer *count*, not
+     encode latency. Per this project's own reliability rules ("fail
+     loudly, never silently"), a viewer-facing latency regression currently
+     has no alert path — it degrades silently until a human notices on
+     their phone. Fix direction: have `StreamWatchdog` (or a new component)
+     probe `babycam`'s actual glass-to-glass latency and alert via the
+     existing `Notifier` path when it crosses a threshold.
+   - **(Lower confidence, secondary)** the audio input's PTS is never reset
+     to the same epoch as the two video inputs (`setpts=PTS-STARTPTS` is
+     only applied to `[0:v]`/`[2:v]` in `deploy/go2rtc-host.yaml`, not the
+     audio track). Since `device_audio` runs continuously from boot while
+     `babycam` respawns (and re-zeros its video PTS) on every new viewer
+     connection, the AV timestamp gap could grow across reconnects over a
+     long session and contribute to muxer interleave stalls. Worth checking
+     via `ffprobe`/muxer logs during a long soak before treating as
+     confirmed.
+   - Minor, unrelated cleanup surfaced by the same review pass: `matplotlib`
+     is now an unused dependency (`pyproject.toml`) after the
+     dead-code-removal commit in `bbwatch/overlay_generator.py` deleted the
+     last caller — needs a `poetry lock` regen + Docker rebuild
+     verification, small enough to fold into this pass or do standalone.
+3. **Proposed for Phase 3 — bbwatch becomes the video compositor, so `zoom`
    actually zooms what you watch.** Today `motion.zoom`/`offset_x`/
    `offset_y` crop only the *internal* region `MotionDetector` analyzes for
    the "Motion: X%" reading — the streamed video is a completely separate
@@ -226,12 +272,12 @@ knowing the ceiling isn't the IMX500 alone.
      `bbwatch/main.py` wiring, both go2rtc configs, and their respective
      test suites. Real work, not a config tweak — deferred out of the
      current session by explicit choice, tracked here so it isn't lost.
-3. **Later, bigger still:** evaluate replacing OpenCV frame-differencing
+4. **Later, bigger still:** evaluate replacing OpenCV frame-differencing
    entirely with IMX500 on-sensor detection. Largest potential CPU win, but
    changes who owns the camera (bbwatch/picamera2 vs. go2rtc/rpicam-vid) at
-   a deeper level than item 2 — deserves its own ADR and a spike. Still
+   a deeper level than item 3 — deserves its own ADR and a spike. Still
    Python; see the IMX500 section above.
-4. **Only if profiling ever shows it's needed:** extract one specific,
+5. **Only if profiling ever shows it's needed:** extract one specific,
    stable, hot loop into a PyO3-backed Rust module, following the pattern
    above. Not before there's a profile showing Python-level (not
    OpenCV-level) overhead actually dominates that loop — which isn't the case
