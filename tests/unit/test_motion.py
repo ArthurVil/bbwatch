@@ -172,6 +172,7 @@ def test_process_frame_motion_detected(motion_detector, mock_cv2):
     mock_cv2.absdiff.return_value = np.ones((100, 100), dtype=np.uint8) * 255
     mock_cv2.threshold.return_value = (0, np.ones((100, 100), dtype=np.uint8))
     mock_cv2.dilate.return_value = np.ones((100, 100), dtype=np.uint8)  # All pixels changed
+    mock_cv2.countNonZero.side_effect = lambda arr: int(np.count_nonzero(arr))
 
     # First frame (baseline)
     motion_detector.process_frame(mock_frame)
@@ -194,6 +195,7 @@ def test_process_frame_no_motion(motion_detector, mock_cv2):
     mock_cv2.absdiff.return_value = np.zeros((100, 100), dtype=np.uint8)
     mock_cv2.threshold.return_value = (0, np.zeros((100, 100), dtype=np.uint8))
     mock_cv2.dilate.return_value = np.zeros((100, 100), dtype=np.uint8)
+    mock_cv2.countNonZero.side_effect = lambda arr: int(np.count_nonzero(arr))
 
     motion_detector.process_frame(mock_frame)
     motion, detected = motion_detector.process_frame(mock_frame)
