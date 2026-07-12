@@ -182,18 +182,55 @@ knowing the ceiling isn't the IMX500 alone.
 
 ## What I'd actually propose, phased
 
-1. **Now (Python-only, no architecture change):** land the copy/allocation
-   cleanup from the in-progress dataflow audit, and add the ISP lores-stream
-   offload for motion detection. Both are cheap, low-risk, and address the
-   *measured* costs directly.
-2. **Current task:** lock the pipeline to 720p end-to-end (already in
-   progress) — a straightforward ~44% pixel-count reduction across every
-   stage (decode, diff, encode) with no architecture change.
-3. **Later, bigger:** evaluate replacing OpenCV frame-differencing with
-   IMX500 on-sensor detection. This is the change with the largest potential
-   CPU win, but it changes who owns the camera (bbwatch/picamera2 vs.
-   go2rtc/rpicam-vid) and deserves its own ADR and a spike before committing.
-   Still Python.
+1. **Done (2026-07-12):** copy/allocation cleanup in `overlay_generator.py`/
+   `motion.py` (RGBA-native colors skip a per-frame `cvtColor`, direct-
+   memoryview writes skip a `.tobytes()` copy, `cv2.countNonZero` replaces a
+   full boolean-array `sum`, dilate kernel built once) and the 720p
+   end-to-end resolution migration. Measured result: load average dropped
+   from a 12.33 peak to a steady 2.64; motion `process` stage dropped ~10x;
+   see `docs/latency.md`'s 2026-07-12 update for the full before/after.
+2. **Proposed for Phase 3 — bbwatch becomes the video compositor, so `zoom`
+   actually zooms what you watch.** Today `motion.zoom`/`offset_x`/
+   `offset_y` crop only the *internal* region `MotionDetector` analyzes for
+   the "Motion: X%" reading — the streamed video is a completely separate
+   path (go2rtc/ffmpeg decodes the raw camera feed and alpha-composites
+   bbwatch's transparent overlay layer on top) that never sees the crop.
+   Making "streamed image = processed area" true requires the crop to reach
+   the actual base video, which means restructuring who owns compositing:
+   - Extract the crop math (`_crop_roi`) into a shared `bbwatch/roi.py`
+     function used by both `MotionDetector` and `OverlayGenerator` — a
+     single source of truth, specifically to avoid recreating today's
+     problem (two independent implementations of "what zoom means" that can
+     drift apart) in a new form.
+   - `MotionDetector` exposes its already-decoded frames
+     (`get_latest_raw_frame()`) for `OverlayGenerator` to reuse, avoiding a
+     second independent RTSP/H.264 decode of the same source.
+   - `OverlayGenerator` becomes the real compositor: crop the shared frame,
+     resize the crop back up to the full output canvas (the actual "digital
+     zoom" — crop small, scale up to fill the frame), draw the
+     timestamp/motion%/plot and alert-color tint directly onto that real
+     video (tinting becomes a Python-side pixel blend instead of an ffmpeg
+     alpha-composite), and pipe out the complete annotated frame. Output
+     format can drop from RGBA to BGR24 (alpha was only ever needed for
+     ffmpeg's *compositing* step, which goes away) — a 25% smaller
+     per-frame payload as a side effect.
+   - go2rtc's `babycam` definition simplifies to reading that pipe and
+     encoding it (plus muxing audio when present) — no more decoding the
+     raw camera stream or running an `overlay` filter itself, which should
+     *reduce* its CPU cost despite doing "more."
+   - Needs an explicit decision on the no-signal case (camera frame missing
+     or stale): render a clear "NO SIGNAL" placeholder rather than silently
+     repeating old footage as if live, consistent with this project's
+     loud-failure rule.
+   - Scope: touches `bbwatch/overlay_generator.py`, `bbwatch/motion.py`,
+     `bbwatch/main.py` wiring, both go2rtc configs, and their respective
+     test suites. Real work, not a config tweak — deferred out of the
+     current session by explicit choice, tracked here so it isn't lost.
+3. **Later, bigger still:** evaluate replacing OpenCV frame-differencing
+   entirely with IMX500 on-sensor detection. Largest potential CPU win, but
+   changes who owns the camera (bbwatch/picamera2 vs. go2rtc/rpicam-vid) at
+   a deeper level than item 2 — deserves its own ADR and a spike. Still
+   Python; see the IMX500 section above.
 4. **Only if profiling ever shows it's needed:** extract one specific,
    stable, hot loop into a PyO3-backed Rust module, following the pattern
    above. Not before there's a profile showing Python-level (not
