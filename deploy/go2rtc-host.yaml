@@ -11,13 +11,15 @@
 #   sudo systemctl daemon-reload && sudo systemctl enable --now go2rtc
 
 streams:
-  # CSI camera via rpicam-vid (IMX500 AI Camera): 1080p@10fps H.264.
-  # 10 fps: sufficient for a baby monitor, ~3x less CPU for the Pi5's
-  # software-only encode/decode chain, and longer low-light exposures.
+  # CSI camera via rpicam-vid (IMX500 AI Camera): 720p@10fps H.264.
+  # 720p end-to-end (this + overlay/babycam below): ~44% of 1080p's pixel
+  # count, cutting decode/encode cost at every stage roughly in proportion —
+  # see docs/tech_note_language_and_acceleration.md. 10 fps: sufficient for
+  # a baby monitor and longer low-light exposures.
   device_video:
     # --libav-format h264 is required: with '-o -' rpicam-vid's libav backend
     # cannot infer the container format and exits immediately.
-    - "exec:rpicam-vid -t 0 --width 1920 --height 1080 --framerate 10 --codec h264 --inline --nopreview --libav-format h264 -o -#autostart"
+    - "exec:rpicam-vid -t 0 --width 1280 --height 720 --framerate 10 --codec h264 --inline --nopreview --libav-format h264 -o -#autostart"
 
   # USB mic via ALSA (no PulseAudio on this host).
   # NOTE: match this with audio.device_index in config.yaml; USB card numbers
@@ -49,7 +51,7 @@ streams:
     - "exec:ffmpeg -hide_banner -v error \
       -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_video \
       -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_audio \
-      -f rawvideo -pixel_format rgba -video_size 1920x1080 -framerate 15 -i /home/kanai/bbwatch/data/overlays/overlay.pipe \
+      -f rawvideo -pixel_format rgba -video_size 1280x720 -framerate 15 -i /home/kanai/bbwatch/data/overlays/overlay.pipe \
       -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=1' \
       -fps_mode cfr -r 15 -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
       -c:a copy \
