@@ -100,6 +100,135 @@ def test_status_color_logic(overlay_generator):
     assert overlay_generator._get_status_color() == overlay_generator.COLOR_TRANSPARENT
 
 
+class TestWriteFrame:
+    """_write_frame must push a whole frame through the FIFO, or fail loudly."""
+
+    def test_retries_on_short_write_until_complete(self, overlay_generator):
+        """A frame is far larger than the pipe buffer, so a single os.write()
+        is always partial; _write_frame must keep writing the remainder.
+        """
+        frame = np.zeros((2, 2, 4), dtype=np.uint8)  # 16 bytes total
+        total = frame.nbytes
+        written_chunks = []
+
+        def fake_write(fd, buf):
+            n = min(3, len(buf))  # force multiple short writes
+            written_chunks.append(bytes(buf[:n]))
+            return n
+
+        overlay_generator.running = True
+        with patch("os.write", side_effect=fake_write):
+            overlay_generator._write_frame(99, frame)
+
+        assert sum(len(c) for c in written_chunks) == total
+
+    def test_waits_on_blocking_io_error_then_completes(self, overlay_generator):
+        """A full pipe buffer raises BlockingIOError; the writer must wait
+        for the reader to drain it (via select) rather than dropping data
+        or busy-looping, then resume writing the same frame.
+        """
+        frame = np.zeros((2, 2, 4), dtype=np.uint8)
+        total = frame.nbytes
+        calls = {"n": 0}
+
+        def fake_write(fd, buf):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise BlockingIOError()
+            return len(buf)
+
+        overlay_generator.running = True
+        with (
+            patch("os.write", side_effect=fake_write),
+            patch("select.select", return_value=([], [99], [])) as mock_select,
+        ):
+            overlay_generator._write_frame(99, frame)
+
+        mock_select.assert_called_once()
+        assert calls["n"] == 2  # first blocked, second completed the frame
+
+    def test_broken_pipe_propagates_when_reader_disconnects_mid_frame(self, overlay_generator):
+        """A reader disconnecting mid-frame must raise BrokenPipeError up to
+        run_loop, which reconnects — a partially-written frame must never
+        be silently abandoned (rawvideo has no framing markers to resync).
+        """
+        frame = np.zeros((2, 2, 4), dtype=np.uint8)
+        overlay_generator.running = True
+
+        with patch("os.write", side_effect=BrokenPipeError()):
+            with pytest.raises(BrokenPipeError):
+                overlay_generator._write_frame(99, frame)
+
+    def test_stops_early_when_running_flag_cleared(self, overlay_generator):
+        """stop() sets running=False; an in-progress write loop must not
+        keep pushing bytes after that.
+        """
+        frame = np.zeros((4, 4, 4), dtype=np.uint8)
+        calls = {"n": 0}
+
+        def fake_write(fd, buf):
+            calls["n"] += 1
+            overlay_generator.running = False  # simulate stop() mid-write
+            return 1
+
+        overlay_generator.running = True
+        with patch("os.write", side_effect=fake_write):
+            overlay_generator._write_frame(99, frame)
+
+        assert calls["n"] == 1  # loop exited instead of continuing to write
+
+
+def test_run_loop_reconnects_after_broken_pipe(overlay_generator, mock_cv2):
+    """Failure path: a reader disconnecting mid-frame must not kill run_loop
+    — it should log, close the fd, and loop back to reopen the pipe.
+    """
+    fake_fds = iter([42, 43])
+    opened = []
+
+    def fake_open(path, flags):
+        fd = next(fake_fds)
+        opened.append(fd)
+        return fd
+
+    write_calls = {"n": 0}
+
+    def fake_write_frame(fd, frame_data):
+        write_calls["n"] += 1
+        if write_calls["n"] == 1:
+            raise BrokenPipeError()
+        overlay_generator.running = False  # stop after the reconnect succeeds
+
+    with (
+        patch("os.open", side_effect=fake_open),
+        patch("os.close"),
+        patch("os.mkfifo"),
+        patch("pathlib.Path.exists", return_value=False),
+        patch("select.select", return_value=([], [1], [])),
+        patch("time.sleep"),
+        patch.object(overlay_generator, "_write_frame", side_effect=fake_write_frame),
+    ):
+        overlay_generator.run_loop()
+
+    assert opened == [42, 43]  # reconnected after the broken pipe
+    assert write_calls["n"] == 2
+
+
+def test_run_loop_survives_pipe_creation_failure(overlay_generator, mock_cv2):
+    """Failure path: mkfifo failing (e.g. permission denied, disk full) must
+    be logged, not crash the overlay thread — run_loop still attempts to
+    open the pipe (which will keep retrying) instead of raising.
+    """
+    with (
+        patch("os.mkfifo", side_effect=OSError("no permission")),
+        patch("pathlib.Path.exists", return_value=False),
+        patch("os.open", side_effect=OSError("still no pipe")),
+        patch("time.sleep", side_effect=lambda *_: setattr(overlay_generator, "running", False)),
+    ):
+        overlay_generator.run_loop()  # must not raise
+
+    assert overlay_generator.running is False
+
+
 def test_run_loop_writes_to_pipe(overlay_generator, mock_cv2):
     """run_loop writes frame bytes when the fd is in select's WRITE list.
 
