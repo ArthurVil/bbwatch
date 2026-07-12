@@ -43,14 +43,17 @@ class OverlayGenerator:
     PLOT_HEIGHT: int = 80
     MARGIN: int = 10
 
-    # Colors (BGRA)
-    COLOR_RED: tuple[int, int, int, int] = (0, 0, 255, 100)
-    COLOR_YELLOW: tuple[int, int, int, int] = (0, 255, 255, 100)
-    COLOR_PURPLE: tuple[int, int, int, int] = (255, 0, 128, 100)
+    # Colors (RGBA — matches FFmpeg's rawvideo pixel_format directly, so
+    # generate_frame() never needs a BGRA->RGBA conversion pass over the
+    # full canvas; cv2 draws whatever channel values it's given, it has no
+    # opinion on which convention they represent).
+    COLOR_RED: tuple[int, int, int, int] = (255, 0, 0, 100)
+    COLOR_YELLOW: tuple[int, int, int, int] = (255, 255, 0, 100)
+    COLOR_PURPLE: tuple[int, int, int, int] = (128, 0, 255, 100)
     COLOR_TRANSPARENT: tuple[int, int, int, int] = (0, 0, 0, 0)
     COLOR_BG_PLOT: tuple[int, int, int, int] = (0, 0, 0, 100)
     COLOR_LINE_MOTION: tuple[int, int, int, int] = (0, 255, 0, 255)
-    COLOR_LINE_AUDIO: tuple[int, int, int, int] = (255, 255, 0, 255)
+    COLOR_LINE_AUDIO: tuple[int, int, int, int] = (0, 255, 255, 255)
     COLOR_TEXT_TIMESTAMP: tuple[int, int, int, int] = (255, 255, 255, 255)
     COLOR_TEXT_INFO: tuple[int, int, int, int] = (200, 200, 200, 255)
 
@@ -117,7 +120,7 @@ class OverlayGenerator:
             self.audio_history.append(min(audio_level * 1000, 100))
 
     def _get_status_color(self) -> tuple[int, int, int, int]:
-        """Get background color based on state (BGRA)."""
+        """Get background color based on state (RGBA)."""
         with self._lock:
             state = self._state
 
@@ -182,8 +185,13 @@ class OverlayGenerator:
         cv2.putText(img, "Motion", (x_start, y_start - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, self.COLOR_LINE_MOTION, 1)
         cv2.putText(img, "Audio", (x_start + 60, y_start - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, self.COLOR_LINE_AUDIO, 1)
 
-    def generate_frame(self) -> bytes:
-        """Generate a single overlay frame."""
+    def generate_frame(self) -> np.ndarray:
+        """Generate a single overlay frame.
+
+        Returns a fresh, C-contiguous RGBA array (never a reused buffer) —
+        _write_frame streams it directly via memoryview, skipping a
+        tobytes() copy; safe only because each call allocates anew.
+        """
         # LOGGER.debug("Generating overlay frame")
         # Create transparent base
         img = np.zeros((self.height, self.width, 4), dtype=np.uint8)
@@ -213,11 +221,9 @@ class OverlayGenerator:
         # Draw plot (OpenCV is much faster/stable for this overlay use-case than converting mpl figures)
         self._draw_plot_cv2(img)
 
-        # Convert BGRA (OpenCV) to RGBA (FFmpeg)
-        img_rgba = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
-        return img_rgba.tobytes()
+        return img
 
-    def _write_frame(self, fd: int, frame_data: bytes) -> None:
+    def _write_frame(self, fd: int, frame_data: np.ndarray) -> None:
         """Write one complete frame to the FIFO, handling short writes.
 
         A frame (width*height*4 bytes) is far larger than the pipe buffer
@@ -229,7 +235,12 @@ class OverlayGenerator:
         Raises:
             BrokenPipeError: The reader disconnected mid-frame.
         """
-        view = memoryview(frame_data)
+        # frame_data.data (not memoryview(frame_data) — mypy's stubs don't
+        # recognize ndarray as satisfying the Buffer protocol, though it
+        # does at runtime) is a (height, width, 4)-shaped memoryview.
+        # .cast("B") flattens it to 1-D bytes: without it, view[written:]
+        # would slice by ROW, not by byte.
+        view = frame_data.data.cast("B")
         while view and self.running:
             try:
                 written = os.write(fd, view)
