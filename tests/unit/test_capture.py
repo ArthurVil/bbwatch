@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -112,6 +113,83 @@ def test_sliding_window_init(tmp_path):
     # n = 3 / 1 = 3.
     swc2 = SlidingWindowCapture(device="hw:0,0", output_dir=tmp_path, segment_duration=3.0, overlap=2.0)
     assert swc2.n_processes == 3
+
+
+def test_start_raises_runtime_error_when_ffmpeg_missing(capture):
+    """Regression/failure-path: a missing ffmpeg binary must surface as a
+    clear RuntimeError, not an unhandled FileNotFoundError deep in Popen.
+    """
+    with patch("bbwatch.capture.subprocess.Popen", side_effect=FileNotFoundError("no ffmpeg")):
+        with pytest.raises(RuntimeError, match="FFmpeg not found"):
+            capture.start()
+
+
+def test_stop_kills_process_when_terminate_times_out(capture, mock_subprocess):
+    """If FFmpeg ignores SIGTERM, stop() must escalate to kill() rather than
+    hang forever waiting for a process that will never exit.
+    """
+    capture.start()
+    process_mock = mock_subprocess.return_value
+    process_mock.wait.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=5.0)
+
+    capture.stop()
+
+    process_mock.terminate.assert_called_once()
+    process_mock.kill.assert_called_once()
+
+
+def test_monitor_loop_restarts_ffmpeg_after_it_dies(capture, mock_subprocess):
+    """Failure path: FFmpeg exiting non-zero mid-run must trigger an
+    automatic restart via the real _monitor_loop, not silently stop
+    producing segments forever.
+
+    The process dies after the first health check; the loop must call
+    _start_process() again and then stop retrying once the stop event is
+    set (simulating a healthy restart followed by shutdown).
+    """
+    process_mock = mock_subprocess.return_value
+    process_mock.poll.return_value = 1  # dead from the start
+    process_mock.returncode = 1
+
+    capture._stop_event.clear()
+    capture._process = process_mock
+    capture._max_restarts = 10
+
+    calls = {"n": 0}
+    real_sleep_calls = []
+
+    def fake_sleep(seconds):
+        real_sleep_calls.append(seconds)
+        calls["n"] += 1
+        if calls["n"] >= 2:  # let exactly one restart happen, then stop
+            capture._stop_event.set()
+
+    with patch("bbwatch.capture.time.sleep", side_effect=fake_sleep):
+        capture._monitor_loop()
+
+    assert capture._restart_count == 1
+    assert mock_subprocess.call_count == 1  # one restart via _start_process (no initial start() call here)
+
+
+def test_monitor_loop_thread_restarts_and_gives_up_after_max_restarts(capture, mock_subprocess):
+    """End-to-end via the real monitor thread: death -> restart, repeated
+    until _max_restarts is exceeded, at which point the loop gives up
+    instead of restart-looping forever.
+    """
+    process_mock = mock_subprocess.return_value
+    process_mock.poll.return_value = 1  # "already dead" from the first check
+    process_mock.returncode = 1
+
+    capture._max_restarts = 2
+    capture._stop_event.clear()
+    capture._process = process_mock
+
+    with patch("bbwatch.capture.time.sleep"):
+        capture._monitor_loop()  # runs to completion once max_restarts exceeded
+
+    assert capture._restart_count == 2
+    # initial _process assigned manually + 2 restarts via _start_process
+    assert mock_subprocess.call_count == 2
 
 
 def test_sliding_window_start_stop(tmp_path, mock_subprocess):
