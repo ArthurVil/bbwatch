@@ -8,6 +8,19 @@ via host-native go2rtc, motion and overlay at 15 fps, one RTSP viewer
 consuming `babycam`). Audio pipeline numbers are pending — no microphone was
 connected at measurement time.
 
+**Updated 2026-07-12**: pipeline migrated to **720p (1280x720) end-to-end**
+(capture, overlay canvas, `babycam` composite — see
+`docs/tech_note_language_and_acceleration.md` and the dataflow audit that
+drove this change), plus copy/allocation cleanups in `overlay_generator.py`
+and `motion.py` (RGBA-native color constants skip a per-frame `cvtColor`
+pass, `_write_frame` streams the array directly instead of via
+`.tobytes()`, `cv2.countNonZero` replaces a full boolean-array `sum`, the
+dilate kernel is built once). `motion.process_width` was deliberately left
+at its default (640) rather than raised to 1280 to match the new capture
+resolution — the live numbers below show why that was the right call.
+Re-measured under the same conditions (one active viewer) but with the
+Pi otherwise idle (no other load).
+
 Related: [latency_improvements.md](latency_improvements.md) (improvement plan),
 [decisions/](decisions/) (ADRs).
 
@@ -84,14 +97,25 @@ CSI camera (imx708) ──libcamera──▶ go2rtc `rpicam:0` (1080p30 H.264)
 | Frame hand-off | capture thread → `_process_loop` (`motion.py`) | Lock-guarded latest-frame buffer, processed at `motion.fps` (15) | **frame_age** (capture ts → processing start) |
 | Motion DSP | `MotionDetector.process_frame` (`motion.py`) | `cv2.cvtColor`/`GaussianBlur`/`absdiff`/`threshold`/`dilate` + numpy changed-pixel ratio | **process** |
 
-| Stage | Expected (x86 dev) | Measured RPi5 avg | Measured RPi5 max |
-|---|---|---|---|
-| frame_age | ≤ ~70 ms (one 15 fps period) | **46–49 ms** | **104–115 ms** |
-| process | 5–20 ms @ decode resolution | **10–12 ms** | **20–26 ms** |
+| Stage | 2026-07-11 @ 1080p10 (avg/max) | **2026-07-12 @ 720p10 (avg/max)** |
+|---|---|---|
+| frame_age | 46–49 ms / 104–115 ms | **43–54 ms / 84–102 ms** |
+| process | 10–12 ms / 20–26 ms | **0.7–0.8 ms / 1.2–4.0 ms** |
 
-Measured at 15 fps processing of the 1080p10 stream (n≈150 per 10 s window):
-comfortably within budget. frame_age max ~110 ms reflects the 10 fps source —
-a frame can be up to one source period (100 ms) old before processing.
+`process` dropped roughly an order of magnitude — the `countNonZero`/hoisted-
+kernel cleanup accounts for some of it, but the bulk is that a `zoom: 2.0`
+crop of a 1280x720 native frame lands almost exactly at
+`motion.process_width`'s default (640), so `_resize_for_processing` becomes
+a no-op (see the dataflow audit's note on this). `frame_age` stayed flat
+across four consecutive 10 s windows over ~40 s of continuous viewing — the
+`fps_mode=cfr` fix (below) holds under sustained load, not just briefly.
+
+**On `process_width`**: with `process` costing well under 1 ms today, there
+is ample headroom to raise `motion.process_width` toward 1280 (full native
+width, no downscale) if finer-grained motion analysis is ever wanted —
+even a ~4x pixel-count increase would land in the low single-digit
+milliseconds. Left at 640 for now since nothing currently needs the extra
+resolution; revisit if `zoom` changes or detection quality demands it.
 
 `frame_age` is the one to watch: sustained growth means the process loop or the
 RTSP decode can't keep up (CPU saturation or network stall).
@@ -111,15 +135,16 @@ main loop (20 Hz) ──update_state──▶ OverlayGenerator.run_loop (15 fps)
 | FIFO write | `OverlayGenerator._write_frame` | `os.write` loop on `O_NONBLOCK` fd with `select` backpressure; 1.2 MB frame vs 64 KiB pipe buffer | **write** |
 | Composite + encode | go2rtc `babycam` exec (`docker/go2rtc.yaml:14-22`) | FFmpeg `overlay` filter, `libx264 -preset ultrafast -tune zerolatency -g 30` | — (external) |
 
-| Stage | Expected (x86 dev) | Measured RPi5 avg | Measured RPi5 max |
-|---|---|---|---|
-| render | 3–15 ms | **1.3–2.1 ms** | 8.2 ms (12.8 ms first frame) |
-| write | ~1 ms when reader keeps up; grows under backpressure | **1.0–12 ms** | 12–58 ms steady; **624 ms spike** while go2rtc's FFmpeg starts up |
+| Stage | 2026-07-11 @ 640x480 canvas (avg/max) | **2026-07-12 @ 1280x720 canvas (avg/max)** |
+|---|---|---|
+| render | 1.3–2.1 ms / 8.2 ms (12.8 ms first frame) | **0.7–1.4 ms / 1.0–11.0 ms** |
+| write | 1.0–12 ms / 12–58 ms steady, 624 ms cold-start spike | **1.8–2.0 ms / 5.7–17.3 ms** |
 
-The 624 ms write max occurred in the window where the babycam consumer FFmpeg
-was starting (pipe buffer full until its reader began draining); steady state
-settles to avg ~1 ms / max ~12 ms. render+write ≈ 3 ms against the 66 ms frame
-budget — the overlay path has ample headroom.
+Despite a 4x larger canvas (1280x720 vs 640x480), both stages got *faster*:
+the RGBA-native color constants (no more per-frame `cvtColor` pass) and the
+direct-memoryview write (no more `.tobytes()` copy) more than offset the
+larger frame size. render+write ≈ 2–4 ms against the 66 ms frame budget —
+even more headroom than before.
 
 `write` doubles as a **backpressure gauge**: it includes waiting for go2rtc's
 FFmpeg to drain the pipe. If `render + write` exceeds the 66 ms frame budget
@@ -134,18 +159,31 @@ Measured only end-to-end (viewer-side), not in bbwatch logs:
 - AAC audio encode + the `shortest=0` A/V sync in the babycam filter graph.
 - Network (LAN Wi-Fi vs Ethernet) and browser decode.
 
-## Measured CPU budget (RPi5, one babycam viewer, 2026-07-11)
+## Measured CPU budget (RPi5, one babycam viewer)
 
-| Process | % of one core | Role |
-|---|---|---|
-| babycam FFmpeg | ~75% | decode 1080p10 + overlay filter + libx264 encode (runs only while viewed) |
-| bbwatch python | ~50% | motion RTSP decode + diff, overlay render, main loop |
-| rpicam-vid | ~33% | 1080p10 software H.264 encode (Pi 5 has no HW encoder) |
-| go2rtc | ~0% | pure remux |
+| Process | 2026-07-11 @ 1080p10 | **2026-07-12 @ 720p10** | Role |
+|---|---|---|---|
+| babycam FFmpeg | ~75% (up to 110% observed under contention) | **~39%** | decode + overlay filter + libx264 encode (runs only while viewed) |
+| bbwatch python | ~50% (up to 73% with zoom enabled) | **~23%** | motion RTSP decode + crop/diff, overlay render, main loop |
+| rpicam-vid | ~33% | **~17%** | software H.264 capture encode (Pi 5 has no HW encoder) |
+| go2rtc | ~0% | ~1% | pure remux |
 
-≈1.6 of 4 cores with an active viewer; ≈0.85 idle (babycam's FFmpeg starts on
-demand). See [camera.md](camera.md) for the offload roadmap (on-sensor
-inference replacing the motion decode path).
+**~0.8 of 4 cores with an active viewer** (was ≈1.6), measured with the Pi
+otherwise idle. Load average dropped from a peak of 12.33 (during an earlier
+overload — three local Chromium tabs plus the encoder plus a since-fixed
+`-fps_mode` bug that made `babycam` restart-loop) to a steady **2.64**.
+Thermal: 58°C, `throttled=0x0` (was 67°C climbing under the earlier overload).
+See [camera.md](camera.md) for the offload roadmap (on-sensor inference
+replacing the motion decode path) and
+[tech_note_language_and_acceleration.md](tech_note_language_and_acceleration.md)
+for the full resolution-migration reasoning.
+
+**`fps_mode=cfr` backlog fix confirmed holding**: `frame_age` stayed flat
+(43–54 ms) across four consecutive 10 s windows of continuous viewing, no
+upward drift — the growing-latency bug from 2026-07-11 (glass-to-glass delay
+creeping to ~15 s after hours of runtime, traced to an encoder with no
+frame-rate policy queuing every input frame regardless of how far behind it
+fell) has not recurred under this measurement.
 
 ## Config knobs that move these numbers
 
