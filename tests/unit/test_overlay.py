@@ -128,7 +128,6 @@ class TestWriteFrame:
         or busy-looping, then resume writing the same frame.
         """
         frame = np.zeros((2, 2, 4), dtype=np.uint8)
-        total = frame.nbytes
         calls = {"n": 0}
 
         def fake_write(fd, buf):
