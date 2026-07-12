@@ -1,8 +1,9 @@
 """Unit tests for AlertManager state machine."""
 
 import json
+import subprocess
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -197,6 +198,59 @@ class TestAlertManager:
 
         assert len(recorder.capture_frame_calls) == 1
         assert recorder.capture_frame_calls[0].suffix == ".jpg"
+
+    def test_write_status_oserror_is_logged_not_raised(self, manager, config):
+        """Failure path: a status.json write failure (disk full, permission
+        denied) must be logged and swallowed, never propagate up and kill
+        the calling thread (watchdog observer or main loop).
+        """
+        with patch("builtins.open", side_effect=OSError("disk full")):
+            status = manager.process_intensity(0.12)  # must not raise
+
+        assert status.alert_active is True  # state machine still advanced
+
+    def test_trigger_handles_recorder_already_recording(self, config):
+        """RuntimeError from start_recording (already recording) must be
+        caught and logged, not propagate and break the alert state machine.
+        """
+        recorder = MagicMock()
+        recorder.is_recording.return_value = False
+        recorder.start_recording.side_effect = RuntimeError("Already recording")
+        manager = AlertManager(config, recorder=recorder)
+
+        status = manager.process_intensity(0.12)  # must not raise
+
+        assert status.alert_active is True
+        assert manager.current_state == AlertState.TRIGGERED
+
+    def test_trigger_handles_ffmpeg_not_found(self, config):
+        """FileNotFoundError from start_recording (ffmpeg missing) must be
+        caught and logged, not crash the alert pipeline.
+        """
+        recorder = MagicMock()
+        recorder.is_recording.return_value = False
+        recorder.start_recording.side_effect = FileNotFoundError("ffmpeg")
+        manager = AlertManager(config, recorder=recorder)
+
+        status = manager.process_intensity(0.12)  # must not raise
+
+        assert status.alert_active is True
+        assert manager.current_state == AlertState.TRIGGERED
+
+    def test_screenshot_failure_is_caught_in_background_thread(self, config):
+        """Screenshot capture errors (timeout, non-zero exit, missing ffmpeg)
+        must not crash the daemon thread they run on.
+        """
+        config.screenshot_on_peak = True
+        recorder = MagicMock()
+        recorder.is_recording.return_value = False
+        recorder.capture_frame.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=10)
+        manager = AlertManager(config, recorder=recorder)
+
+        manager.process_intensity(0.12)
+        time.sleep(0.05)  # let the background screenshot thread run and raise
+
+        recorder.capture_frame.assert_called_once()
 
     def test_no_screenshot_when_disabled(self, config):
         """No screenshot when screenshot_on_peak=False."""
