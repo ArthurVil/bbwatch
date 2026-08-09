@@ -61,6 +61,36 @@ needed: lower fps (longer max exposure), and rpicam options for gain/exposure
 ceilings. Motion detection thresholds (`motion.threshold`) may need raising at
 night since sensor noise inflates frame-to-frame differences.
 
+**Auto-exposure convergence as a false-motion source.** Frame differencing
+can't distinguish "the whole frame got brighter" from real motion — every
+pixel shifts together and can spike the changed-pixel percentage well past
+`motion_threshold_percent`, exactly when the AE loop is working hardest (a
+dimming room at night). Two independent mitigations, addressing it from
+opposite ends:
+
+- **Software** (`motion.equalize_luminosity`, in `config.yaml`): applies
+  global histogram equalization before differencing, which is mathematically
+  invariant to any monotonic brightness shift *provided no pixel
+  saturates* — see `bbwatch/motion.py`. A shift large enough to clip pixels
+  to 0/255 (a dark room pushed bright — the exact scenario this targets)
+  breaks that guarantee: measured ~44% saturated pixels still leaving ~38%
+  residual false motion, well above a typical `motion_threshold_percent`.
+  Cheap, always available, no video-quality tradeoff, but doesn't stop AE
+  from converging slowly (motion blur / gain noise during the transition are
+  unaffected), and isn't a hard guarantee in the brightest/darkest extremes.
+- **Camera-level** (not currently applied — see the commented example in
+  `deploy/go2rtc-host.yaml`'s `device_video` stream): fixing `--shutter`
+  (µs) and `--gain` removes AE hunting at the source entirely, at the cost
+  of losing auto-adaptation to real brightness changes in the room (a lamp
+  turning on/off would then look identical to the camera). Needs a value
+  tuned to the actual room and left as an opt-in example rather than a
+  default for that reason.
+
+Use the software option first — it's zero-risk. Camera-level locking is worth
+revisiting only if a specific room's AE hunting proves severe enough that
+equalization's per-frame fix isn't enough (e.g. motion blur during the
+exposure transition itself becomes the bigger problem).
+
 ## Can the on-board accelerator encode/compress video? No — but it can offload something better
 
 The IMX500's accelerator is a **neural-network inference DSP, not a video
