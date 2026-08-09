@@ -4,13 +4,22 @@ FROM python:3.11-slim-bookworm
 LABEL maintainer="bbwatch contributors"
 LABEL description="Production environment for bbwatch on Raspberry Pi"
 
-# System dependencies (ARM64-native)
+# System dependencies (ARM64-native).
+#
+# No libcamera/rpicam package here: camera capture is host-native (go2rtc +
+# rpicam-vid own the CSI camera lock, see docs/SETUP_RPI5.md); this
+# container only does audio DSP, motion analysis against go2rtc's RTSP
+# restream, and overlay generation. Debian's `libcamera-tools` package
+# (confirmed via `apt-cache show`) only provides the `cam`/`qcam` utilities
+# anyway, not the `libcamera-hello` binary hardware_detector.py shells out
+# to — so it was never able to satisfy that code path even when installed;
+# hardware_detector.py already fails soft (DEBUG log) when the binary is
+# missing, which is exactly what happens with or without this package.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     alsa-utils \
     v4l-utils \
     libsndfile1 \
-    libcamera-tools \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
