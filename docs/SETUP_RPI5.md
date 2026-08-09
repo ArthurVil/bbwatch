@@ -216,6 +216,26 @@ mic-shaped RTSP audio stream that no longer carries audio.
   ffmpeg process blocks opening the FIFO input until a writer connects (see
   [CLAUDE.md](../CLAUDE.md) "Key constraints").
 
+**Stream freezes/goes blank after restarting bbwatch (but bbwatch's own logs look fine)**
+- Restarting bbwatch alone breaks the overlay composite. go2rtc's `babycam`
+  ffmpeg process reads the overlay FIFO as one of its inputs; when
+  bbwatch's old process exits, its writer fd closes, ffmpeg sees EOF on
+  that input, and — unlike a fresh startup, where it blocks waiting for a
+  writer — it does **not** resume reading once bbwatch reopens the pipe.
+  The video composite stalls silently: bbwatch's `LATENCY overlay` log
+  line will show `dropped=` climbing toward 100% (render succeeds, but the
+  write-readiness check never finds the pipe writable again), while every
+  other bbwatch log line looks completely healthy — nothing in bbwatch's
+  own process is actually broken.
+- Fix: restart go2rtc too. `make restart` (run from the repo root) does
+  both together for exactly this reason — prefer it over
+  `docker compose restart bbwatch` alone whenever you restart bbwatch for
+  any reason (picking up a code change, a config edit, testing a fix).
+- To confirm this is what's happening rather than something else: `docker
+  compose -f docker/docker-compose.yml logs --tail=20 bbwatch | grep
+  LATENCY.*overlay` — a `dropped=` percentage stuck near 100% across
+  several consecutive lines is the signature.
+
 **Port already in use**
 - `ss -tlnp | grep -E '8554|1984'` shows what's currently bound. A stray
   manually-started go2rtc process, or a Docker-based go2rtc left over from
