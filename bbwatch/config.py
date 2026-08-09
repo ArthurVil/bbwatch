@@ -111,6 +111,11 @@ class AlertConfig(StrictModel):
     # overlay is drawn unscaled in a corner of the frame.
     overlay_width: int = Field(default=640, ge=160, le=3840)
     overlay_height: int = Field(default=480, ge=120, le=2160)
+    # Frame delivery policy when the overlay pipe's reader (FFmpeg/go2rtc)
+    # falls behind: True drops the current frame and sends the freshest
+    # state next pass (bounded latency, some loss); False waits for the
+    # reader, delivering every frame with no loss but unbounded latency.
+    overlay_drop_stale_frames: bool = Field(default=True)
 
     @field_validator("trigger_low")
     @classmethod

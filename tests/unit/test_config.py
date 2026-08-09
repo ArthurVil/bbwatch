@@ -140,11 +140,28 @@ alerts:
         config = BBWatchConfig.from_yaml(config_file)
         assert config.alerts.cooldown_s == 1.0
 
+    def test_overlay_drop_stale_frames_defaults_true(self):
+        """Default overlay frame policy is drop-stale (bounded latency)."""
+        assert BBWatchConfig().alerts.overlay_drop_stale_frames is True
+
+    def test_overlay_drop_stale_frames_from_yaml(self, tmp_path):
+        """The no-loss opt-out must reach AlertConfig via YAML."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            """
+alerts:
+  overlay_drop_stale_frames: false
+"""
+        )
+        config = BBWatchConfig.from_yaml(config_file)
+        assert config.alerts.overlay_drop_stale_frames is False
+
     def test_shipped_config_yaml_is_valid(self):
         """The config.yaml shipped in the repo must load without errors."""
         repo_config = Path(__file__).parents[2] / "config.yaml"
         config = BBWatchConfig.from_yaml(repo_config)
         assert config.alerts.cooldown_s == 1.0
+        assert config.alerts.overlay_drop_stale_frames is True
 
     def test_from_yaml_invalid_yaml(self, tmp_path):
         """Invalid YAML should raise ValueError."""

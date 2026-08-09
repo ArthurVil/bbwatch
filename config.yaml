@@ -30,6 +30,8 @@ alerts:
   overlay_fps: 15                  # Must match -framerate of the overlay pipe input in the go2rtc config
   overlay_width: 1280               # Must match video resolution AND -video_size in the go2rtc config
   overlay_height: 720               # (otherwise the overlay lands unscaled in a corner of the frame)
+  overlay_drop_stale_frames: true   # true: drop a frame if the pipe reader lags (bounded latency, some loss)
+                                     # false: wait for the reader, no loss but latency can grow unbounded
 
 # Motion detection parameters
 motion:
