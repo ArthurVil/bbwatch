@@ -48,6 +48,15 @@ motion:
   # offset_x: 0.0                    # -1 (left edge) .. 1 (right edge), 0 = centered
   # offset_y: 0.0                    # -1 (top edge) .. 1 (bottom edge), 0 = centered
 
+  # Normalize brightness (global histogram equalization) before diffing, so
+  # a global lighting shift (auto-exposure converging in low light,
+  # AC-light flicker) doesn't read as motion across the whole frame.
+  # Off by default — turning it on changes sensitivity, so re-check
+  # threshold/motion_threshold_percent afterwards.
+  # TODO: threshold/motion_threshold_percent above have NOT been re-tuned
+  # since enabling this — they're the same values chosen without it.
+  equalize_luminosity: true
+
 # Runtime options
 log_level: INFO
 fake_hardware: false

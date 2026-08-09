@@ -169,6 +169,30 @@ class MotionConfig(StrictModel):
         description="Explicit RTSP URL for motion detection; when empty, derived from an RTSP audio URL",
     )
 
+    # Luminosity normalization before diffing. Raw frame differencing can't
+    # tell "the whole frame got brighter" (auto-exposure converging in low
+    # light, AC-light flicker) from real motion — a global brightness shift
+    # lights up the entire diff and can trigger a false alert. Global
+    # histogram equalization (cv2.equalizeHist) is the right tool for this
+    # specific failure mode: it's exactly invariant to any monotonic pixel
+    # transform (an additive/multiplicative brightness shift included) —
+    # PROVIDED no pixel saturates (clips to 0 or 255). A shift large enough
+    # to saturate a meaningful fraction of the frame breaks that guarantee
+    # (measured: ~44% saturated pixels left ~38% residual false motion
+    # after equalization, still above a typical motion_threshold_percent),
+    # so this reduces false motion from exposure shifts, it does not
+    # eliminate it in every case. Unlike CLAHE, whose clip limit
+    # deliberately breaks the invariance even without saturation, to avoid
+    # over-amplifying noise in flat regions — measured >50% false "motion"
+    # on a pure, non-saturating exposure shift at typical clip-limit
+    # settings, vs. 0% for equalizeHist there. Off by default: it changes
+    # detection sensitivity, so enabling it may need
+    # threshold/motion_threshold_percent re-tuning.
+    equalize_luminosity: bool = Field(
+        default=False,
+        description="Apply global histogram equalization to normalize brightness before frame differencing",
+    )
+
     @field_validator("blur_size")
     @classmethod
     def blur_size_must_be_odd(cls, v: int) -> int:

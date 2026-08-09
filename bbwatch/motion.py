@@ -35,6 +35,7 @@ class MotionDetector:
         offset_y: float = 0.0,
         process_width: int = 640,
         latency_report_interval_s: float = 10.0,
+        equalize_luminosity: bool = False,
     ) -> None:
         """Initialize motion detector.
 
@@ -59,6 +60,17 @@ class MotionDetector:
                 resolution. The crop is downscaled to this width only if
                 larger; never upscaled.
             latency_report_interval_s: Seconds between latency summaries.
+            equalize_luminosity: Apply global histogram equalization
+                (cv2.equalizeHist) to the grayscale frame before
+                differencing, so a global lighting shift (auto-exposure
+                converging in low light, AC-light flicker) doesn't read as
+                motion across the whole frame — equalizeHist is exactly
+                invariant to any monotonic pixel transform, which an
+                additive/multiplicative brightness shift is, PROVIDED no
+                pixel saturates (clips to 0 or 255): a shift large enough
+                to saturate a meaningful fraction of the frame still leaves
+                a real, if reduced, false-motion signal. Off by default —
+                changes detection sensitivity.
         """
         self.device_index = device_index
         self.threshold = threshold
@@ -71,6 +83,7 @@ class MotionDetector:
         self.offset_y = offset_y
         self.process_width = process_width
         self.frame_delay = 1.0 / fps  # Pre-calculate sleep time
+        self.equalize_luminosity = equalize_luminosity
 
         self._prev_gray: np.ndarray | None = None
         self._current_motion: float = 0.0
@@ -151,6 +164,14 @@ class MotionDetector:
         frame = self._crop_roi(frame)
         frame = self._resize_for_processing(frame)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if self.equalize_luminosity:
+            # Global histogram equalization before blurring: exactly
+            # invariant to a monotonic brightness shift (auto-exposure
+            # converging, AC flicker) as long as it doesn't saturate pixels
+            # — see __init__'s equalize_luminosity docstring for the
+            # saturating case, where a smaller but real false-motion signal
+            # can still get through.
+            gray = cv2.equalizeHist(gray)
         gray = cv2.GaussianBlur(gray, (self.blur_size, self.blur_size), 0)
 
         motion_percent = 0.0

@@ -9,6 +9,7 @@ from bbwatch.config import (
     AudioConfig,
     BBWatchConfig,
     DetectionConfig,
+    MotionConfig,
     StorageConfig,
 )
 
@@ -78,6 +79,14 @@ class TestStorageConfig:
         """Default path should be relative."""
         config = StorageConfig()
         assert not config.wav_dir.is_absolute()
+
+
+class TestMotionConfig:
+    """Tests for MotionConfig."""
+
+    def test_equalize_luminosity_defaults_false(self):
+        """Off by default — changes detection sensitivity, so it's opt-in."""
+        assert MotionConfig().equalize_luminosity is False
 
 
 class TestBBWatchConfig:
@@ -162,6 +171,7 @@ alerts:
         config = BBWatchConfig.from_yaml(repo_config)
         assert config.alerts.cooldown_s == 1.0
         assert config.alerts.overlay_drop_stale_frames is True
+        assert config.motion.equalize_luminosity is True
 
     def test_from_yaml_invalid_yaml(self, tmp_path):
         """Invalid YAML should raise ValueError."""

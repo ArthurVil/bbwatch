@@ -204,6 +204,99 @@ def test_process_frame_no_motion(motion_detector, mock_cv2):
     assert not detected
 
 
+class TestEqualizeLuminosity:
+    """equalizeHist wiring: off by default, applied before the blur."""
+
+    def test_disabled_by_default_not_applied(self, motion_detector, mock_cv2):
+        mock_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        mock_cv2.cvtColor.return_value = np.zeros((100, 100), dtype=np.uint8)
+        mock_cv2.GaussianBlur.return_value = np.zeros((100, 100), dtype=np.uint8)
+
+        motion_detector.process_frame(mock_frame)
+
+        mock_cv2.equalizeHist.assert_not_called()
+
+    def test_process_frame_applies_equalize_hist_when_enabled(self, mock_cv2):
+        detector = MotionDetector(equalize_luminosity=True)
+        mock_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        mock_gray = np.zeros((100, 100), dtype=np.uint8)
+        mock_cv2.cvtColor.return_value = mock_gray
+        mock_cv2.GaussianBlur.return_value = mock_gray
+
+        detector.process_frame(mock_frame)
+
+        mock_cv2.equalizeHist.assert_called_once_with(mock_gray)
+
+
+class TestEqualizeLuminosityReducesFalseMotion:
+    """Real cv2 (not mocked): the actual point of this feature — a uniform
+    brightness shift (auto-exposure converging, AC flicker) must not read
+    as motion once equalization is on.
+    """
+
+    def _textured_frame(self, shift: int = 0) -> np.ndarray:
+        # A smooth but non-flat pattern with real local contrast structure,
+        # not a blank frame.
+        y, x = np.mgrid[0:96, 0:128]
+        base = 128 + 40 * np.sin(x / 5.0) + 40 * np.cos(y / 7.0)
+        gray = np.clip(base + shift, 0, 255).astype(np.uint8)
+        return np.stack([gray, gray, gray], axis=-1)
+
+    def test_uniform_brightness_shift_without_equalization_reads_as_motion(self):
+        """Baseline (no mitigation): measured 100% — a uniform +40 shift
+        exceeds `threshold=25` everywhere, so the whole frame reads as
+        changed. >50.0 leaves headroom against exact-value flakiness while
+        still proving "most of the frame," not a borderline result.
+        """
+        detector = MotionDetector(threshold=25, blur_size=3, dilation_iterations=0, equalize_luminosity=False)
+
+        detector.process_frame(self._textured_frame(shift=0))
+        motion_percent, detected = detector.process_frame(self._textured_frame(shift=40))
+
+        assert motion_percent > 50.0
+        assert detected
+
+    def test_uniform_brightness_shift_with_equalization_does_not(self):
+        """equalizeHist is exactly invariant to a monotonic pixel transform
+        (which an additive brightness shift is, absent saturation), unlike
+        CLAHE — whose clip limit deliberately breaks that invariance and
+        measured >50% false motion here at typical clip-limit settings.
+
+        shift=40 keeps every pixel below 255 (base tops out at ~208) — this
+        case deliberately avoids saturation to isolate the invariance
+        property; see the saturating case below for what happens once that
+        assumption breaks.
+        """
+        detector = MotionDetector(threshold=25, blur_size=3, dilation_iterations=0, equalize_luminosity=True)
+
+        detector.process_frame(self._textured_frame(shift=0))
+        motion_percent, detected = detector.process_frame(self._textured_frame(shift=40))
+
+        assert motion_percent < 5.0
+        assert not detected
+
+    def test_saturating_brightness_shift_still_leaves_residual_false_motion(self):
+        """equalizeHist's invariance assumes no saturation — a shift large
+        enough to clip pixels at 255 breaks the one-to-one histogram
+        mapping the guarantee depends on, and a real (smaller, but still
+        possibly threshold-crossing) false-motion signal survives.
+
+        shift=120 clips ~44% of pixels to 255 here (measured), leaving
+        ~38% residual motion_percent after equalization — comfortably
+        above the shipped motion_threshold_percent (5.0), i.e. still a
+        false alert. This is the honest counterpart to the non-saturating
+        case above: equalize_luminosity reduces false motion from exposure
+        shifts, it does not eliminate it in every case.
+        """
+        detector = MotionDetector(threshold=25, blur_size=3, dilation_iterations=0, equalize_luminosity=True)
+
+        detector.process_frame(self._textured_frame(shift=0))
+        motion_percent, detected = detector.process_frame(self._textured_frame(shift=120))
+
+        assert motion_percent > 20.0
+        assert detected
+
+
 def test_capture_loop(motion_detector, mock_cv2):
     # Mock VideoCapture
     mock_cap = MagicMock()
