@@ -58,6 +58,12 @@ services:
       # Dockerfile.dev (default) for x86 dev; set BBWATCH_DOCKERFILE=Dockerfile.rpi
       # in docker/.env on the Pi for the slim runtime-only image.
       dockerfile: docker/${BBWATCH_DOCKERFILE:-Dockerfile.dev}
+    # This is a 24/7 monitor: a crash or a host reboot must not leave it
+    # silently down until someone notices (see .claude/rules/reliability.md).
+    # unless-stopped (not always) still honors a deliberate `docker compose
+    # stop` — it won't fight you during maintenance, but recovers from
+    # anything else, including dockerd itself restarting after a reboot.
+    restart: unless-stopped
     network_mode: host
     # Run as container root: under rootless Docker this maps to the host user,
     # which owns the bind mounts (the rpi image's non-root user cannot write them).
