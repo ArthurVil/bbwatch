@@ -195,14 +195,18 @@ class MotionDetector:
         return None if ts is None else time.time() - ts
 
     def is_healthy(self, max_frame_age_s: float = 10.0) -> bool:
-        """True when the capture thread is alive and frames are fresh.
+        """True when the capture and processing threads are alive and frames are fresh.
 
         Polled by the main loop so a dead or stalled capture (device
-        unplugged, RTSP hung) is surfaced instead of silently serving
-        stale motion values forever.
+        unplugged, RTSP hung) — or a dead processing thread, which
+        previously went undetected here even though frames kept arriving —
+        is surfaced instead of silently serving stale motion values forever.
         """
-        thread = getattr(self, "capture_thread", None)
-        if thread is None or not thread.is_alive():
+        capture_thread = getattr(self, "capture_thread", None)
+        if capture_thread is None or not capture_thread.is_alive():
+            return False
+        process_thread = getattr(self, "process_thread", None)
+        if process_thread is None or not process_thread.is_alive():
             return False
         age = self.last_frame_age_s()
         return age is not None and age <= max_frame_age_s
@@ -321,9 +325,19 @@ class MotionDetector:
                 if frame_ts is not None:
                     # Age of the frame when processing begins (capture → process)
                     timer.stages["frame_age"] = (time.time() - frame_ts) * 1000.0
-                self.process_frame(frame_to_process)
-                timer.mark("process")
-                self._latency.record(timer)
+                try:
+                    self.process_frame(frame_to_process)
+                except Exception:
+                    # A single bad frame must not silently kill this thread:
+                    # is_healthy() also checks process_thread.is_alive() now,
+                    # but an uncaught exception here would still take motion
+                    # detection down invisibly until the next poll — log loud
+                    # and keep going, matching OverlayGenerator's per-frame
+                    # resilience pattern.
+                    LOGGER.exception("Motion processing failed on this frame; continuing")
+                else:
+                    timer.mark("process")
+                    self._latency.record(timer)
 
             # Maintain target FPS
             elapsed = time.time() - start_time

@@ -277,6 +277,34 @@ def test_capture_loop_reopens_on_read_failure(motion_detector, mock_cv2):
     assert motion_detector._last_frame_ts is not None  # liveness updated
 
 
+def test_process_loop_survives_process_frame_exception(motion_detector, mock_cv2):
+    """A crash inside process_frame() (a bad frame, or any cv2 call
+    including equalizeHist) must not silently kill this thread —
+    is_healthy() checks process_thread.is_alive(), so a thread that died
+    here would otherwise go undetected while motion data froze forever.
+    """
+    motion_detector._latest_frame = np.zeros((10, 10, 3), dtype=np.uint8)
+    motion_detector._frame_lock = MagicMock()
+    motion_detector.running = True
+
+    calls = {"n": 0}
+
+    def fake_process_frame(frame):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("corrupt frame")
+        motion_detector.running = False  # stop after the second call
+        return (0.0, False)
+
+    with (
+        patch.object(motion_detector, "process_frame", side_effect=fake_process_frame),
+        patch("bbwatch.motion.time.sleep"),
+    ):
+        motion_detector._process_loop()  # must not raise
+
+    assert calls["n"] == 2  # survived the exception and processed the next frame
+
+
 def test_is_healthy_reflects_thread_and_frame_freshness(motion_detector):
     """is_healthy() is the main loop's signal that motion data is real."""
     # No capture thread yet
@@ -284,7 +312,12 @@ def test_is_healthy_reflects_thread_and_frame_freshness(motion_detector):
 
     motion_detector.capture_thread = MagicMock(is_alive=lambda: True)
 
-    # Thread alive but no frame ever captured
+    # Capture thread alive, but no process thread yet
+    assert motion_detector.is_healthy() is False
+
+    motion_detector.process_thread = MagicMock(is_alive=lambda: True)
+
+    # Both threads alive but no frame ever captured
     assert motion_detector.is_healthy() is False
 
     # Fresh frame
@@ -295,9 +328,16 @@ def test_is_healthy_reflects_thread_and_frame_freshness(motion_detector):
     motion_detector._last_frame_ts = time.time() - 60.0
     assert motion_detector.is_healthy() is False
 
-    # Dead thread with fresh frame
+    # Dead capture thread with fresh frame
     motion_detector.capture_thread = MagicMock(is_alive=lambda: False)
     motion_detector._last_frame_ts = time.time()
+    assert motion_detector.is_healthy() is False
+
+    # Regression: a dead *processing* thread must be caught too — frames can
+    # keep arriving (capture thread fine) while process_frame() has crashed
+    # and stopped updating motion data entirely.
+    motion_detector.capture_thread = MagicMock(is_alive=lambda: True)
+    motion_detector.process_thread = MagicMock(is_alive=lambda: False)
     assert motion_detector.is_healthy() is False
 
 
