@@ -79,6 +79,19 @@ class MotionDetector:
         # Fixed 3x3 dilate kernel — built once instead of every process_frame() call.
         self._dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
 
+        # cv2 defaults to one worker thread per core for its internal ops
+        # (cvtColor/GaussianBlur/absdiff/threshold/dilate). Measured on an
+        # x86 dev box (proxy for the Pi): on the ~640px-wide frames this
+        # pipeline actually processes, per-frame cost with the default
+        # thread pool was ~0.23ms vs ~0.21ms single-threaded — the
+        # dispatch/join overhead of spreading sub-millisecond work across
+        # cores costs more than it saves, and the extra worker threads
+        # compete with the main loop, OverlayGenerator, and capture threads
+        # for the Pi's 4 cores. This setting is process-global (OpenCV has
+        # one thread pool per process), so it also applies to
+        # OverlayGenerator's cv2 drawing calls.
+        cv2.setNumThreads(1)
+
         # Liveness: timestamp of the last successfully captured frame.
         # None until the first frame arrives. Read by is_healthy().
         self._last_frame_ts: float | None = None
