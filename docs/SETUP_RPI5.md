@@ -5,15 +5,6 @@ This guide walks through setting up bbwatch on Raspberry Pi 5 with Pi Camera Mod
 ## Prerequisites
 
 - **Raspberry Pi 5** (4GB or 8GB RAM)
-- **Official Raspberry Pi 5 27W USB-C power supply** (5V⎓5A). Not optional:
-  the Pi 5 draws its heaviest load exactly when a viewer connects and
-  go2rtc's `babycam` starts transcoding (CPU jumps to ~75–110%, see
-  [docs/latency.md](latency.md)). An underspecced USB-C PD charger or a
-  plain USB-A→C cable can't sustain that spike — it brownouts, the red
-  power LED flickers, and the board hard-crashes. If you see that pattern
-  ("crashes as soon as someone opens the stream"), this is almost always
-  the cause; check `vcgencmd get_throttled` for undervoltage bits (bit 0
-  = currently under-voltage, bit 16 = has occurred since boot).
 - **Raspberry Pi Camera Module 3** (standard or wide angle)
 - **Micro SD card** — 64GB recommended (for WAV segment storage)
 - **Raspberry Pi OS 64-bit** — latest version (kernel 6.x supports libcamera natively)
