@@ -256,6 +256,7 @@ class BabyMonitor:
                 fps=self.config.alerts.overlay_fps,
                 history_len=self.config.motion.history_len,
                 latency_report_interval_s=self.config.latency_report_interval_s,
+                drop_stale_frames=self.config.alerts.overlay_drop_stale_frames,
             )
             self._overlay_generator.start()
         else:
