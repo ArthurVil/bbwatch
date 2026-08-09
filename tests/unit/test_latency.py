@@ -91,3 +91,40 @@ class TestLatencyTracker:
 
         assert not any("LATENCY" in r.getMessage() for r in log_capture)
         assert tracker._count == 1  # still accumulating
+
+    def test_track_drops_reports_count_and_rate(self, log_capture):
+        """A tracker opted into drop tracking must surface it in the summary."""
+        tracker = LatencyTracker("overlay", report_interval_s=3600.0, track_drops=True)
+
+        # Accumulate 3 passes without triggering a report yet.
+        for dropped in (False, True, True):
+            timer = StageTimer()
+            timer.mark("render")
+            tracker.record(timer, dropped=dropped)
+
+        # Force the next record() to cross the report interval.
+        tracker._last_report = time.time() - 4000.0
+        timer = StageTimer()
+        timer.mark("render")
+        tracker.record(timer, dropped=False)
+
+        summaries = [r.getMessage() for r in log_capture if "LATENCY overlay" in r.getMessage()]
+        assert len(summaries) == 1
+        assert "dropped=2/4 (50.0%)" in summaries[0]
+        # Drop count resets alongside the window after reporting.
+        assert tracker._dropped == 0
+
+    def test_track_drops_false_never_emits_dropped_segment(self, log_capture):
+        """Pipelines that never opt in must not grow an always-zero segment,
+        even if a caller mistakenly passes dropped=True.
+        """
+        tracker = LatencyTracker("motion", report_interval_s=0.0)
+        tracker._last_report = time.time() - 1.0
+        timer = StageTimer()
+        timer.mark("process")
+
+        tracker.record(timer, dropped=True)
+
+        summaries = [r.getMessage() for r in log_capture if "LATENCY motion" in r.getMessage()]
+        assert len(summaries) == 1
+        assert "dropped=" not in summaries[0]

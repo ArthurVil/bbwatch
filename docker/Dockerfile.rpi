@@ -4,13 +4,22 @@ FROM python:3.11-slim-bookworm
 LABEL maintainer="bbwatch contributors"
 LABEL description="Production environment for bbwatch on Raspberry Pi"
 
-# System dependencies (ARM64-native)
+# System dependencies (ARM64-native).
+#
+# No libcamera/rpicam package here: camera capture is host-native (go2rtc +
+# rpicam-vid own the CSI camera lock, see docs/SETUP_RPI5.md); this
+# container only does audio DSP, motion analysis against go2rtc's RTSP
+# restream, and overlay generation. Debian's `libcamera-tools` package
+# (confirmed via `apt-cache show`) only provides the `cam`/`qcam` utilities
+# anyway, not the `libcamera-hello` binary hardware_detector.py shells out
+# to — so it was never able to satisfy that code path even when installed;
+# hardware_detector.py already fails soft (DEBUG log) when the binary is
+# missing, which is exactly what happens with or without this package.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     alsa-utils \
     v4l-utils \
     libsndfile1 \
-    libcamera-tools \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -21,8 +30,26 @@ COPY README.md ./
 COPY bbwatch/ ./bbwatch/
 COPY config.yaml ./
 
-# Install runtime dependencies only (no dev)
-RUN pip install --no-cache-dir .
+# Install runtime dependencies only (no dev), then swap the GUI-capable
+# opencv-python for opencv-python-headless: this image never calls a cv2
+# GUI/highgui function (those live only in scripts/demo_*.py, not shipped
+# here — see bbwatch/motion.py and bbwatch/overlay_generator.py, which only
+# use array ops + drawing primitives). Measured on ARM64 (manylinux2014
+# aarch64 wheels for the version pyproject.toml/poetry.lock resolved at the
+# time of measurement, 4.11.0.86): opencv-python 42.2MB vs
+# opencv-python-headless 29.5MB, ~30% smaller. Version comes from
+# `pip show` (the exact PyPI distribution version, e.g. 4.11.0.86), not
+# `cv2.__version__` (which drops the trailing packaging build number, e.g.
+# "4.11.0" — confirmed by hand: pip cannot resolve
+# opencv-python-headless==4.11.0, only the full 4.11.0.86). This keeps the
+# headless swap matched to whatever `pip install .` actually resolved from
+# pyproject's `^4.8.0` range instead of silently drifting to a different
+# build. Scoped to this Dockerfile only — pyproject.toml keeps plain
+# opencv-python so Dockerfile.dev and the demo scripts keep GUI support.
+RUN pip install --no-cache-dir . \
+    && OPENCV_VERSION=$(pip show opencv-python | grep '^Version:' | awk '{print $2}') \
+    && pip uninstall -y opencv-python \
+    && pip install --no-cache-dir "opencv-python-headless==${OPENCV_VERSION}"
 
 # Run as non-root user
 RUN useradd -m bbwatch && chown -R bbwatch:bbwatch /app

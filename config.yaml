@@ -30,6 +30,8 @@ alerts:
   overlay_fps: 15                  # Must match -framerate of the overlay pipe input in the go2rtc config
   overlay_width: 1280               # Must match video resolution AND -video_size in the go2rtc config
   overlay_height: 720               # (otherwise the overlay lands unscaled in a corner of the frame)
+  overlay_drop_stale_frames: true   # true: drop a frame if the pipe reader lags (bounded latency, some loss)
+                                     # false: wait for the reader, no loss but latency can grow unbounded
 
 # Motion detection parameters
 motion:
@@ -45,6 +47,20 @@ motion:
   # zoom: 2.0                        # 1.0 = full frame, 2.0 = center 50% width/height, etc.
   # offset_x: 0.0                    # -1 (left edge) .. 1 (right edge), 0 = centered
   # offset_y: 0.0                    # -1 (top edge) .. 1 (bottom edge), 0 = centered
+
+  # Normalize brightness before diffing, so a global lighting shift
+  # (auto-exposure converging in low light, AC-light flicker) doesn't read
+  # as motion across the whole frame. Calibrated ONCE from the first frame
+  # and frozen for the process's life — does not track lighting changes
+  # after that first frame (see bbwatch/motion.py for why: two earlier
+  # per-frame approaches amplified sensor noise badly in a dim room).
+  # Off by default — turning it on changes sensitivity, so re-check
+  # threshold/motion_threshold_percent afterwards.
+  # TODO: if/when this is re-enabled, threshold/motion_threshold_percent
+  # above have NOT been re-tuned for it — they're the same values chosen
+  # without it. Off for now, pending field verification of this design.
+  equalize_luminosity: false
+  clahe_clip_limit: 2.0              # Bounds noise amplification in the frozen LUT; higher = more amplification
 
 # Runtime options
 log_level: INFO

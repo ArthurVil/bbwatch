@@ -6,6 +6,7 @@ that uses DSP techniques rather than ML for the PoC phase.
 
 import logging
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -31,6 +32,7 @@ class DetectionResult(NamedTuple):
     duration_s: float
 
 
+@lru_cache(maxsize=8)
 def butter_bandpass(
     lowcut: float,
     highcut: float,
@@ -38,6 +40,15 @@ def butter_bandpass(
     order: int = 4,
 ) -> np.ndarray:
     """Design a Butterworth bandpass filter.
+
+    Cached: (lowcut, highcut, fs, order) are fixed for the life of a run
+    (they come straight from config), but `detect_cry` called this on
+    every single segment — measured on an x86 dev box (proxy for the Pi,
+    same scipy/numpy build), `butter(..., output="sos")` costs ~0.29ms,
+    *more* than the `sosfilt` apply step (~0.08ms) it feeds on a
+    0.33s/48kHz segment. `lru_cache` turns N redundant designs/run into 1.
+    Safe to share the returned array across calls: nothing downstream
+    (`sosfilt`) mutates the SOS coefficients it's given.
 
     Args:
         lowcut: Low frequency cutoff in Hz.

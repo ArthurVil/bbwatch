@@ -238,6 +238,8 @@ To achieve low-latency streaming (<1s delay):
 
 4. **Measure it**: every pipeline stage is instrumented (`bbwatch/latency.py`). Aggregated `LATENCY` summaries are logged at INFO every `latency_report_interval_s` (default 10 s); per-event `latency ...` lines appear at DEBUG. See [docs/latency.md](docs/latency.md) for how to read them and for measured RPi5 numbers.
 
+5. **Frame delivery policy**: `alerts.overlay_drop_stale_frames` (default `true`) drops an overlay frame outright when the pipe reader falls behind, always sending the freshest state next pass — bounded latency, some loss, and drop counts show up in the `LATENCY overlay` summary. Set it to `false` for no-loss delivery instead, at the cost of unbounded latency if the reader can't keep up.
+
 ## Architecture
 
 For a deep dive into the system architecture, decision records (ADRs), and perception algorithms, see [docs/architecture.md](docs/architecture.md).
