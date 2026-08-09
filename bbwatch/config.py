@@ -171,26 +171,60 @@ class MotionConfig(StrictModel):
 
     # Luminosity normalization before diffing. Raw frame differencing can't
     # tell "the whole frame got brighter" (auto-exposure converging in low
-    # light, AC-light flicker) from real motion — a global brightness shift
-    # lights up the entire diff and can trigger a false alert. Global
-    # histogram equalization (cv2.equalizeHist) is the right tool for this
-    # specific failure mode: it's exactly invariant to any monotonic pixel
-    # transform (an additive/multiplicative brightness shift included) —
-    # PROVIDED no pixel saturates (clips to 0 or 255). A shift large enough
-    # to saturate a meaningful fraction of the frame breaks that guarantee
-    # (measured: ~44% saturated pixels left ~38% residual false motion
-    # after equalization, still above a typical motion_threshold_percent),
-    # so this reduces false motion from exposure shifts, it does not
-    # eliminate it in every case. Unlike CLAHE, whose clip limit
-    # deliberately breaks the invariance even without saturation, to avoid
-    # over-amplifying noise in flat regions — measured >50% false "motion"
-    # on a pure, non-saturating exposure shift at typical clip-limit
-    # settings, vs. 0% for equalizeHist there. Off by default: it changes
-    # detection sensitivity, so enabling it may need
-    # threshold/motion_threshold_percent re-tuning.
+    # light, AC-light flicker) from real motion.
+    #
+    # History: two earlier revisions of this feature recomputed the
+    # equalization adaptively on every frame (first CLAHE, then global
+    # cv2.equalizeHist); the second was deployed and reported live as
+    # near-constant false-motion flicker after dimming a room. The PROVEN
+    # cause and fix is clahe_clip_limit (see below) — measure there, not
+    # here, before assuming freezing is what protects you.
+    #
+    # The current approach also calibrates a brightness-equalization LUT
+    # ONCE from the first frame and freezes it for the process's life
+    # (bbwatch/motion.py's MotionDetector._build_luminosity_lut), as
+    # additional, unproven-by-test insurance: it removes any dependence on
+    # two real frames' histograms staying statistically similar (true for
+    # simple i.i.d. per-pixel noise, tested here, but not necessarily true
+    # for compression artifacts, correlated sensor read noise, or
+    # continuous micro-exposure drift — none of which the current test
+    # models). The tradeoff freezing does definitely cost: it will NOT
+    # track a real lighting change after that first frame (room
+    # brightening/dimming later reads exactly as it would with this off,
+    # until the process restarts).
+    #
+    # clahe_clip_limit bounds how steeply the frozen LUT stretches the
+    # calibration frame — this is the mechanism actually verified to
+    # control noise amplification: a high limit amplifies noise on every
+    # frame it's applied to regardless of freezing (measured: unclipped
+    # stretching of a narrow, noisy, low-contrast frame reproduces the same
+    # ~45% false motion whether recomputed every frame or frozen — freezing
+    # alone, without a low clip limit, does not fix the reported bug). 2.0
+    # (OpenCV's typical CLAHE default) measured 0% false motion on a
+    # synthetic reproduction of the reported bug, both frozen and
+    # recomputed per frame at that same limit.
+    #
+    # Because calibration only ever happens once, ANY low-dynamic-range or
+    # otherwise unrepresentative first frame — not just "dim and noisy":
+    # glare, mid-AE-convergence, a single hot pixel/IR reflection producing
+    # a sharply-stepped LUT around one value — degrades detection silently
+    # for the rest of the run (see process_frame's raw_range check, which
+    # logs a WARNING for this instead of the identity-fallback guard in
+    # _build_luminosity_lut, which is unreachable at any clahe_clip_limit
+    # this field allows).
+    #
+    # Off by default: changes detection sensitivity, so enabling it may
+    # need threshold/motion_threshold_percent re-tuning.
     equalize_luminosity: bool = Field(
         default=False,
-        description="Apply global histogram equalization to normalize brightness before frame differencing",
+        description="Normalize brightness via a LUT calibrated once from the first frame and frozen thereafter",
+    )
+    clahe_clip_limit: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=40.0,
+        description="Bounds how steeply the frozen luminosity LUT stretches brightness (only used when "
+        "equalize_luminosity is True) — higher amplifies sensor noise more on every frame",
     )
 
     @field_validator("blur_size")

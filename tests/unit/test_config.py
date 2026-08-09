@@ -88,6 +88,12 @@ class TestMotionConfig:
         """Off by default — changes detection sensitivity, so it's opt-in."""
         assert MotionConfig().equalize_luminosity is False
 
+    def test_clahe_clip_limit_default_matches_opencv_convention(self):
+        """2.0 is OpenCV's typical CLAHE default; also the value measured to
+        avoid amplifying noise on a synthetic dim/noisy scene (see
+        bbwatch/motion.py)."""
+        assert MotionConfig().clahe_clip_limit == 2.0
+
 
 class TestBBWatchConfig:
     """Tests for main BBWatchConfig."""
@@ -171,7 +177,8 @@ alerts:
         config = BBWatchConfig.from_yaml(repo_config)
         assert config.alerts.cooldown_s == 1.0
         assert config.alerts.overlay_drop_stale_frames is True
-        assert config.motion.equalize_luminosity is True
+        assert config.motion.equalize_luminosity is False
+        assert config.motion.clahe_clip_limit == 2.0
 
     def test_from_yaml_invalid_yaml(self, tmp_path):
         """Invalid YAML should raise ValueError."""

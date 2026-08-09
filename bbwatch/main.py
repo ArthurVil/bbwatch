@@ -231,6 +231,7 @@ class BabyMonitor:
                 process_width=self.config.motion.process_width,
                 latency_report_interval_s=self.config.latency_report_interval_s,
                 equalize_luminosity=self.config.motion.equalize_luminosity,
+                clahe_clip_limit=self.config.motion.clahe_clip_limit,
             )
             # zoom/offset/process_width have no effect on the video anyone
             # watches — only on the ROI MotionDetector analyzes internally.

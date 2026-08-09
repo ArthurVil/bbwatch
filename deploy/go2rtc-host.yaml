@@ -22,9 +22,9 @@ streams:
     - "exec:rpicam-vid -t 0 --width 1280 --height 720 --framerate 10 --codec h264 --inline --nopreview --libav-format h264 -o -#autostart"
     # Optional: lock exposure/gain to stop auto-exposure convergence (which
     # can read as false motion — bbwatch/motion.py's equalize_luminosity is
-    # the zero-risk software mitigation for that; try it first). Locking
-    # here removes AE hunting entirely but stops the camera adapting to
-    # real brightness changes in the room — tune --shutter (microseconds)
+    # the software mitigation for that; try it first, see docs/camera.md).
+    # Locking here removes AE hunting entirely but stops the camera adapting
+    # to real brightness changes in the room — tune --shutter (microseconds)
     # and --gain to the actual room before using this, then swap the line
     # above for something like:
     # - "exec:rpicam-vid -t 0 --width 1280 --height 720 --framerate 10 --codec h264 --inline --nopreview --libav-format h264 --shutter 20000 --gain 4.0 --awb auto -o -#autostart"
