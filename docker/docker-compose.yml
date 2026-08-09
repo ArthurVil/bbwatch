@@ -70,6 +70,25 @@ services:
     volumes:
       - ..:/app
       - ../data:/app/data
+    # WAV segments (audio.py's SlidingWindowCapture) are ephemeral scratch
+    # data: each is read once by SegmentHandler.on_closed within
+    # milliseconds of being closed, then deleted immediately if silent
+    # (storage.delete_empty_segments, the common case in a quiet room) or
+    # left for StorageManager's high-water-mark cleanup otherwise. None of
+    # that needs SD-card durability, and at 24/7 duty cycle it's a
+    # continuous write+delete workload on the card. Mounting this one
+    # subdirectory as tmpfs (nested inside the ../data bind mount) routes
+    # it to RAM instead — zero SD writes for the audio pipeline's dominant
+    # disk hotspot. Sizing: worst case (continuous non-silent 48kHz mono
+    # s16 audio, nothing ever silence-deleted) is ~96KB/s => a 100MB
+    # high-water mark (BBWATCH_STORAGE__MAX_SIZE_MB below, its Pydantic
+    # floor) fills in ~1000s; StorageManager's default 60s check interval
+    # only lets it overshoot by ~6MB before trimming back toward 90%
+    # (~90MB) — comfortably inside this 128MB cap (~28MB margin, ~5x the
+    # worst-case overshoot). Real usage is far lower: quiet stretches are
+    # deleted on the spot, so this is a large margin, not a tight budget.
+    tmpfs:
+      - /app/data/wav_segments:size=128m,mode=1777
     environment:
       - BBWATCH_LOG_LEVEL=DEBUG
       - BBWATCH_FAKE_HARDWARE=false
@@ -79,6 +98,11 @@ services:
       # video-only mode instead of retrying a dead audio stream forever.
       - BBWATCH_AUDIO__DEVICE_INDEX=${BBWATCH_AUDIO_SOURCE:-rtsp://${RPI_HOST:-127.0.0.1}:8554/babycam}
       - BBWATCH_MOTION__STREAM_URL=rtsp://${RPI_HOST:-127.0.0.1}:8554/raw_video
+      # Well under the 128MB tmpfs cap above (see comment) — max_size_mb's
+      # 1024MB config.yaml default assumes SD/disk-backed storage where
+      # headroom is cheap; on tmpfs it's RAM, so keep the working set small.
+      # 100 is StorageConfig.max_size_mb's Pydantic floor (ge=100.0).
+      - BBWATCH_STORAGE__MAX_SIZE_MB=100
     command: /app/docker/entrypoint.sh
 
   # Interactive shell
