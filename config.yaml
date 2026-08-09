@@ -44,7 +44,7 @@ motion:
   # Crop the analysis ROI before diffing. Same absolute movement covers a
   # larger fraction of a smaller ROI, so cropping to the crib/bed area also
   # raises effective sensitivity there without touching the threshold knobs.
-  # zoom: 2.0                        # 1.0 = full frame, 2.0 = center 50% width/height, etc.
+  zoom: 1.0                          # 1.0 = full frame, 2.0 = center 50% width/height, etc.
   # offset_x: 0.0                    # -1 (left edge) .. 1 (right edge), 0 = centered
   # offset_y: 0.0                    # -1 (top edge) .. 1 (bottom edge), 0 = centered
 
