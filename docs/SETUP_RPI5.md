@@ -295,22 +295,33 @@ When bbwatch starts on RPi5:
 
 ## Configuration
 
-No manual config changes are needed. The `config.yaml` defaults work out-of-the-box:
-
-- Audio is pulled from the Docker container's PulseAudio sink (from host if configured)
-- Video is auto-detected and routed to motion detection via RTSP
-- go2rtc automatically starts the `rpicam:0` source on container startup
+- Video comes from go2rtc's host-native `rpicam-vid` exec stream
+  (`deploy/go2rtc-host.yaml`'s `device_video`), not a Docker-managed
+  camera source.
+- Audio comes from ALSA directly (`device_audio`'s `ffmpeg -f alsa`), not
+  PulseAudio — see "Config variants: with mic vs. video-only" above for
+  the camera-only case.
+- bbwatch (in Docker) reaches both via go2rtc's RTSP streams; motion
+  detection uses `raw_video`, `config.yaml`'s `alerts.stream_url` uses
+  `babycam`.
 
 ### Optional: Adjust resolution
 
-If RPi5 is running hot or you want lower bandwidth, reduce resolution in `docker/go2rtc.yaml`:
+Resolution is set in `deploy/go2rtc-host.yaml`'s `device_video` stream
+(`rpicam-vid --width/--height`), not in a `docker/go2rtc.yaml` — see
+"Editing the config — two separate config surfaces" above: changing the
+*installed* `/etc/go2rtc.yaml` requires re-copying and restarting, not
+just editing the repo file.
 
-```yaml
-device_video:
-  - rpicam:0#width=1280&height=720&fps=30&codec=h264
-```
+Also update `alerts.overlay_width`/`overlay_height` in `config.yaml` and
+the matching `-video_size`/`-framerate` in the `babycam` stream's `exec:`
+command to the same resolution — see
+[docs/latency.md](latency.md#pipeline-3--overlay-compositing) for why they
+must all agree.
 
-Restart: `docker compose restart go2rtc`
+Restart: `make restart` (restarts both bbwatch and go2rtc — see the
+"Stream freezes/goes blank" troubleshooting entry above for why both are
+needed).
 
 ## Stream URLs
 
