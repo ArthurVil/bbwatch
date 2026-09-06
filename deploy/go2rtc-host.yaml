@@ -11,21 +11,54 @@
 #   sudo systemctl daemon-reload && sudo systemctl enable --now go2rtc
 
 streams:
-  # CSI camera via rpicam-vid (IMX500 AI Camera): 720p@10fps H.264.
+  # Active camera: USB UVC IR camera on /dev/video0 (temporary swap from the
+  # CSI sensor — see the commented block below to restore it). The sensor
+  # only advertises MJPG at a single fixed interval (30fps, no lower rate
+  # negotiable), so ffmpeg decodes MJPG and re-encodes to H.264, dropping
+  # to 10fps on the way out to keep CPU cost in line with what the CSI
+  # capture used. Output size stays 1280x720 to match babycam's overlay
+  # compositing below, which expects device_video at that resolution.
+  device_video:
+    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 30 -i /dev/video0 -r 10 -c:v libx264 -preset ultrafast -tune zerolatency -g 20 -f rtsp {output}#autostart"
+
+  # CSI camera via rpicam-vid (IMX500 AI Camera): 720p@10fps H.264. Disabled
+  # while the USB camera above is active — swap it back in by commenting the
+  # device_video block above and uncommenting this one.
   # 720p end-to-end (this + overlay/babycam below): ~44% of 1080p's pixel
   # count, cutting decode/encode cost at every stage roughly in proportion —
   # see docs/tech_note_language_and_acceleration.md. 10 fps: sufficient for
   # a baby monitor and longer low-light exposures.
-  device_video:
-    # --libav-format h264 is required: with '-o -' rpicam-vid's libav backend
-    # cannot infer the container format and exits immediately.
-    - "exec:rpicam-vid -t 0 --width 1280 --height 720 --framerate 10 --codec h264 --inline --nopreview --libav-format h264 -o -#autostart"
+  # device_video:
+  #   # --libav-format h264 is required: with '-o -' rpicam-vid's libav backend
+  #   # cannot infer the container format and exits immediately.
+  #   - "exec:rpicam-vid -t 0 --width 1280 --height 720 --framerate 10 --codec h264 --inline --nopreview --libav-format h264 -o -#autostart"
+  #   # Optional: lock exposure/gain to stop auto-exposure convergence (which
+  #   # can read as false motion — bbwatch/motion.py's equalize_luminosity is
+  #   # the software mitigation for that; try it first, see docs/camera.md).
+  #   # Locking here removes AE hunting entirely but stops the camera adapting
+  #   # to real brightness changes in the room — tune --shutter (microseconds)
+  #   # and --gain to the actual room before using this, then swap the line
+  #   # above for something like:
+  #   # - "exec:rpicam-vid -t 0 --width 1280 --height 720 --framerate 10 --codec h264 --inline --nopreview --libav-format h264 --shutter 20000 --gain 4.0 --awb auto -o -#autostart"
 
-  # USB mic via ALSA (no PulseAudio on this host).
-  # NOTE: match this with audio.device_index in config.yaml; USB card numbers
-  # can drift across reboots — prefer plughw:CARD=<name> form if it happens.
+  # Standalone mic test stream — NOT consumed by anything in production.
+  # bbwatch's own cry-detection audio (BBWATCH_AUDIO__DEVICE_INDEX in
+  # docker/docker-compose.yml) reads from babycam below, not this stream.
+  # Kept only so the mic can be sanity-checked directly (e.g. `ffprobe
+  # rtsp://127.0.0.1:8554/device_audio`) without touching babycam. No
+  # #autostart: babycam already opens plughw:CARD=Camera,DEV=0 directly and
+  # continuously, and this device doesn't reliably support two concurrent
+  # capture opens — autostarting this alongside babycam risks EBUSY-ing one
+  # of them. Uses pcm_mulaw, not aac, for the same reason babycam does (see
+  # its comment below): AAC published through this go2rtc version's exec+RTSP
+  # path never reaches a consumer.
+  # The standalone USB mic that was on card 3 is gone — plugging in the USB
+  # IR camera above bumped it off the bus (or it was unplugged to free the
+  # port). Only capture device left is the IR camera's own built-in
+  # USB-audio mic ("Camera"). CARD=<name> form (not a numeric index) so this
+  # survives future USB renumbering.
   device_audio:
-    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f alsa -i plughw:3,0 -c:a aac -b:a 128k -f rtsp {output}#autostart"
+    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f alsa -i plughw:CARD=Camera,DEV=0 -c:a pcm_mulaw -ar 8000 -ac 1 -f rtsp {output}"
 
   # Restream consumed by bbwatch motion detection (avoids the overlaid stream)
   raw_video:
@@ -48,13 +81,26 @@ streams:
   # rejects it combined with -r as "non-CFR -vsync/-fps_mode" — it strips
   # timestamps for analysis use, not live encoding.)
   babycam:
+    # Audio is captured directly from ALSA here rather than via the
+    # device_audio stream above: nothing published through this go2rtc
+    # version (1.9.14) as AAC over RTSP ever reaches a consumer — the exec
+    # producer launches, announces AAC in its SDP, and then delivers zero
+    # audio bytes indefinitely, with no error at any log level. Confirmed
+    # this is specifically an AAC/RTP issue (its MPEG4-GENERIC payload
+    # needs an SDP fmtp config string, a common source of RTSP/RTP interop
+    # bugs) by swapping codecs: the exact same pipeline with pcm_mulaw
+    # instead of aac delivers real audio on the first try. Traded AAC
+    # 128kbps/48kHz/stereo for G.711 mu-law 64kbps/8kHz/mono — telephone
+    # quality, plenty for hearing a baby cry, and it's what most baby
+    # monitors use anyway. device_audio is left defined above for
+    # standalone testing, but nothing should depend on consuming it.
     - "exec:ffmpeg -hide_banner -v error \
       -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_video \
-      -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_audio \
+      -f alsa -i plughw:CARD=Camera,DEV=0 \
       -f rawvideo -pixel_format rgba -video_size 1280x720 -framerate 15 -i /home/kanai/bbwatch/data/overlays/overlay.pipe \
       -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=1' \
       -fps_mode cfr -r 15 -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
-      -c:a copy \
+      -c:a pcm_mulaw -ar 8000 -ac 1 \
       -f rtsp {output}"
 
 api:

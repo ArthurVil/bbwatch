@@ -162,6 +162,42 @@ alerts:
         assert resolved.storage.wav_dir.is_absolute()
         assert str(tmp_path) in str(resolved.storage.wav_dir)
 
+    def test_resolve_paths_status_file_matches_healthcheck_expectation(self, tmp_path):
+        """Regression: status_file must resolve under data_dir.
+
+        docker/Dockerfile.rpi's HEALTHCHECK reads status.json off a hardcoded
+        absolute path (data_dir joined with the default status_file name) and
+        previously drifted out of sync with this resolution (checked
+        /app/status.json instead of /app/data/status.json). Nothing in the
+        Python test suite pinned the invariant the healthcheck relies on, so
+        the drift was only caught by live debugging on hardware. This asserts
+        the exact join the Dockerfile depends on.
+        """
+        config = BBWatchConfig(data_dir=Path("/app/data"))
+        resolved = config.resolve_paths()
+
+        assert resolved.alerts.status_file == Path("/app/data/status.json")
+
+    def test_resolve_paths_resolves_all_alert_subpaths(self, tmp_path):
+        """Every relative AlertConfig path should be anchored under data_dir."""
+        config = BBWatchConfig(data_dir=tmp_path)
+        resolved = config.resolve_paths()
+
+        assert resolved.alerts.status_file == tmp_path / "status.json"
+        assert resolved.alerts.overlay_dir == tmp_path / "overlays"
+        assert resolved.alerts.clips_dir == tmp_path / "clips"
+        assert resolved.alerts.screenshots_dir == tmp_path / "screenshots"
+
+    def test_resolve_paths_leaves_absolute_paths_untouched(self, tmp_path):
+        """An already-absolute path must not be re-anchored under data_dir."""
+        explicit_status = tmp_path / "elsewhere" / "status.json"
+        config = BBWatchConfig(data_dir=tmp_path / "data")
+        config.alerts.status_file = explicit_status
+
+        resolved = config.resolve_paths()
+
+        assert resolved.alerts.status_file == explicit_status
+
     def test_ensure_directories(self, tmp_path):
         """ensure_directories should create required dirs."""
         config = BBWatchConfig(data_dir=tmp_path / "new_dir")

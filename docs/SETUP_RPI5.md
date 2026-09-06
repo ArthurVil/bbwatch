@@ -173,24 +173,32 @@ sudo systemctl restart go2rtc
 
 ### Config variants: with mic vs. video-only
 
-`deploy/go2rtc-host.yaml` ships with a `device_audio` stream (ALSA mic via
-`exec: ffmpeg … -f alsa`) that the `babycam` composite mixes in with `-c:a
-copy`. On a camera-only deployment (no mic wired up, or a deliberate
-video-only setup — see `BBWATCH_AUDIO_SOURCE=disabled` in `docker/.env`,
-described in `docker-compose.yml`), a hand-edited variant may be installed
-instead that drops the `device_audio:` stream entirely and the corresponding
-second `-i` / `-c:a copy` in the `babycam` composite.
+`babycam` captures its mic input directly (`-f alsa -i plughw:CARD=...`) as
+one of its own `ffmpeg` inputs, rather than relaying a separate `device_audio`
+stream — go2rtc's exec producer never reliably delivers AAC-over-RTSP audio
+published by a second hop (see the comment on `babycam` in
+`deploy/go2rtc-host.yaml` for the full story), so audio has to be captured
+inline with `babycam`'s own process. A separate `device_audio` stream is
+still defined for standalone mic testing (`ffprobe
+rtsp://127.0.0.1:8554/device_audio`) but nothing in production consumes it.
+
+On a camera-only deployment (no mic wired up, or a deliberate video-only
+setup — see `BBWATCH_AUDIO_SOURCE=disabled` in `docker/.env`, described in
+`docker-compose.yml`), a hand-edited variant may be installed that drops the
+`-f alsa -i plughw:...` input and `-c:a pcm_mulaw ...` output flags from
+`babycam`'s own command.
 
 To check which variant is currently installed on the Pi:
 
 ```bash
-grep -A1 'device_audio:' /etc/go2rtc.yaml
+grep -A1 '^  babycam:' /etc/go2rtc.yaml
 ```
 
-No output means the video-only variant is installed. Keep this in sync with
-the bbwatch side: going video-only in `/etc/go2rtc.yaml` without also setting
-`BBWATCH_AUDIO_SOURCE=disabled` in `docker/.env` leaves bbwatch retrying a
-mic-shaped RTSP audio stream that no longer carries audio.
+If `babycam`'s command has no `-f alsa` input, the video-only variant is
+installed. Keep this in sync with the bbwatch side: going video-only in
+`/etc/go2rtc.yaml` without also setting `BBWATCH_AUDIO_SOURCE=disabled` in
+`docker/.env` leaves bbwatch retrying a mic-shaped RTSP audio stream that no
+longer carries audio.
 
 ### Troubleshooting
 
