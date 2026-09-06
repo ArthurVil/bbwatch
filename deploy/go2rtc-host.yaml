@@ -72,13 +72,26 @@ streams:
   # rejects it combined with -r as "non-CFR -vsync/-fps_mode" — it strips
   # timestamps for analysis use, not live encoding.)
   babycam:
+    # Audio is captured directly from ALSA here rather than via the
+    # device_audio stream above: nothing published through this go2rtc
+    # version (1.9.14) as AAC over RTSP ever reaches a consumer — the exec
+    # producer launches, announces AAC in its SDP, and then delivers zero
+    # audio bytes indefinitely, with no error at any log level. Confirmed
+    # this is specifically an AAC/RTP issue (its MPEG4-GENERIC payload
+    # needs an SDP fmtp config string, a common source of RTSP/RTP interop
+    # bugs) by swapping codecs: the exact same pipeline with pcm_mulaw
+    # instead of aac delivers real audio on the first try. Traded AAC
+    # 128kbps/48kHz/stereo for G.711 mu-law 64kbps/8kHz/mono — telephone
+    # quality, plenty for hearing a baby cry, and it's what most baby
+    # monitors use anyway. device_audio is left defined above for
+    # standalone testing, but nothing should depend on consuming it.
     - "exec:ffmpeg -hide_banner -v error \
       -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_video \
-      -fflags nobuffer -flags low_delay -i rtsp://127.0.0.1:8554/device_audio \
+      -f alsa -i plughw:CARD=Camera,DEV=0 \
       -f rawvideo -pixel_format rgba -video_size 1280x720 -framerate 15 -i /home/kanai/bbwatch/data/overlays/overlay.pipe \
       -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=1' \
       -fps_mode cfr -r 15 -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
-      -c:a copy \
+      -c:a pcm_mulaw -ar 8000 -ac 1 \
       -f rtsp {output}"
 
 api:
