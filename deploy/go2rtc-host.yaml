@@ -41,15 +41,24 @@ streams:
   #   # above for something like:
   #   # - "exec:rpicam-vid -t 0 --width 1280 --height 720 --framerate 10 --codec h264 --inline --nopreview --libav-format h264 --shutter 20000 --gain 4.0 --awb auto -o -#autostart"
 
-  # Mic input via ALSA (no PulseAudio on this host). The standalone USB mic
-  # that was on card 3 is gone — plugging in the USB IR camera above bumped
-  # it off the bus (or it was unplugged to free the port). Only capture
-  # device left is the IR camera's own built-in USB-audio mic ("Camera").
-  # NOTE: match this with audio.device_index in config.yaml. Using the
-  # CARD=<name> form (not a numeric index) so this survives future USB
-  # renumbering — see the drift this very comment warned about.
+  # Standalone mic test stream — NOT consumed by anything in production.
+  # bbwatch's own cry-detection audio (BBWATCH_AUDIO__DEVICE_INDEX in
+  # docker/docker-compose.yml) reads from babycam below, not this stream.
+  # Kept only so the mic can be sanity-checked directly (e.g. `ffprobe
+  # rtsp://127.0.0.1:8554/device_audio`) without touching babycam. No
+  # #autostart: babycam already opens plughw:CARD=Camera,DEV=0 directly and
+  # continuously, and this device doesn't reliably support two concurrent
+  # capture opens — autostarting this alongside babycam risks EBUSY-ing one
+  # of them. Uses pcm_mulaw, not aac, for the same reason babycam does (see
+  # its comment below): AAC published through this go2rtc version's exec+RTSP
+  # path never reaches a consumer.
+  # The standalone USB mic that was on card 3 is gone — plugging in the USB
+  # IR camera above bumped it off the bus (or it was unplugged to free the
+  # port). Only capture device left is the IR camera's own built-in
+  # USB-audio mic ("Camera"). CARD=<name> form (not a numeric index) so this
+  # survives future USB renumbering.
   device_audio:
-    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f alsa -i plughw:CARD=Camera,DEV=0 -c:a aac -b:a 128k -f rtsp {output}#autostart"
+    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f alsa -i plughw:CARD=Camera,DEV=0 -c:a pcm_mulaw -ar 8000 -ac 1 -f rtsp {output}"
 
   # Restream consumed by bbwatch motion detection (avoids the overlaid stream)
   raw_video:
