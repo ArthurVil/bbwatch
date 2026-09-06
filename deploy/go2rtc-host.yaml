@@ -41,11 +41,15 @@ streams:
   #   # above for something like:
   #   # - "exec:rpicam-vid -t 0 --width 1280 --height 720 --framerate 10 --codec h264 --inline --nopreview --libav-format h264 --shutter 20000 --gain 4.0 --awb auto -o -#autostart"
 
-  # USB mic via ALSA (no PulseAudio on this host).
-  # NOTE: match this with audio.device_index in config.yaml; USB card numbers
-  # can drift across reboots — prefer plughw:CARD=<name> form if it happens.
+  # Mic input via ALSA (no PulseAudio on this host). The standalone USB mic
+  # that was on card 3 is gone — plugging in the USB IR camera above bumped
+  # it off the bus (or it was unplugged to free the port). Only capture
+  # device left is the IR camera's own built-in USB-audio mic ("Camera").
+  # NOTE: match this with audio.device_index in config.yaml. Using the
+  # CARD=<name> form (not a numeric index) so this survives future USB
+  # renumbering — see the drift this very comment warned about.
   device_audio:
-    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f alsa -i plughw:3,0 -c:a aac -b:a 128k -f rtsp {output}#autostart"
+    - "exec:ffmpeg -hide_banner -fflags nobuffer -flags low_delay -f alsa -i plughw:CARD=Camera,DEV=0 -c:a aac -b:a 128k -f rtsp {output}#autostart"
 
   # Restream consumed by bbwatch motion detection (avoids the overlaid stream)
   raw_video:
