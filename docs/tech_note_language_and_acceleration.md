@@ -221,15 +221,18 @@ knowing the ceiling isn't the IMX500 alone.
      their phone. Fix direction: have `StreamWatchdog` (or a new component)
      probe `babycam`'s actual glass-to-glass latency and alert via the
      existing `Notifier` path when it crosses a threshold.
-   - **(Lower confidence, secondary)** the audio input's PTS is never reset
-     to the same epoch as the two video inputs (`setpts=PTS-STARTPTS` is
-     only applied to `[0:v]`/`[2:v]` in `deploy/go2rtc-host.yaml`, not the
-     audio track). Since `device_audio` runs continuously from boot while
+   - **(Superseded)** the audio input's PTS is never reset to the same epoch
+     as the two video inputs (`setpts=PTS-STARTPTS` is only applied to
+     `[0:v]`/`[2:v]` in `deploy/go2rtc-host.yaml`, not the audio track). This
+     was premised on `device_audio` running continuously from boot while
      `babycam` respawns (and re-zeros its video PTS) on every new viewer
-     connection, the AV timestamp gap could grow across reconnects over a
-     long session and contribute to muxer interleave stalls. Worth checking
-     via `ffprobe`/muxer logs during a long soak before treating as
-     confirmed.
+     connection — a since-fixed AAC/RTSP bug meant `babycam` no longer
+     captures audio via `device_audio` at all; it captures ALSA directly as
+     its own input instead, so audio's PTS now starts fresh on every
+     `babycam` respawn alongside the video inputs, same lifecycle. The
+     specific cross-reconnect drift concern described here no longer
+     applies; not re-verified whether `setpts=PTS-STARTPTS` should now also
+     cover the audio track for the remaining single-session case.
    - Minor, unrelated cleanup surfaced by the same review pass: `matplotlib`
      is now an unused dependency (`pyproject.toml`) after the
      dead-code-removal commit in `bbwatch/overlay_generator.py` deleted the
