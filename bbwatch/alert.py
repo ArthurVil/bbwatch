@@ -19,6 +19,11 @@ from bbwatch.recording import FFmpegRecorder, Recorder, recover_partial_clips
 
 LOGGER = logging.getLogger(__name__)
 
+# Minimum gap between clip start attempts. Rollover is re-checked on every
+# state update (~20 Hz from motion); without this a dead stream, where
+# ffmpeg exits immediately, would respawn it on every call.
+RECORD_RETRY_S = 5.0
+
 
 def _dated_path(base_dir: Path, suffix: str) -> Path:
     """Output path grouped by day: ``base_dir/YYYY-MM-DD/HHMMSS<suffix>``.
@@ -81,6 +86,7 @@ class AlertManager:
         self._audio_hot = False
         self._motion_hot = False
         self._motion_since: float | None = None
+        self._last_record_attempt = float("-inf")
         self._recorder: Recorder = recorder if recorder is not None else FFmpegRecorder(config.stream_url)
         # Serializes state-machine updates: audio arrives on the watchdog
         # observer thread, motion on the main loop thread.
@@ -247,6 +253,8 @@ class AlertManager:
             else:
                 # Still triggered, update timestamp (keep alive)
                 self._last_trigger_time = now
+                # Clip hit record_max_s (or failed) while the alert goes on: roll over
+                self._ensure_recording(now)
 
         elif self._state == AlertState.COOLDOWN:
             if active:
@@ -265,7 +273,7 @@ class AlertManager:
         )
 
         if new_state == AlertState.TRIGGERED:
-            self._handle_trigger()
+            self._handle_trigger(now)
             self._last_trigger_time = now
 
         elif new_state == AlertState.COOLDOWN:
@@ -288,22 +296,28 @@ class AlertManager:
         except OSError as e:
             LOGGER.error(f"Failed to write status file: {e}")
 
-    def _handle_trigger(self) -> None:
+    def _handle_trigger(self, now: float) -> None:
         """Called when alert is triggered."""
         LOGGER.info(f"🚨 ALERT TRIGGERED (source={self.trigger_source}) - Starting recording/screenshot")
 
         if self.config.screenshot_on_peak:
             threading.Thread(target=self._take_screenshot, daemon=True).start()
 
-        if not self._recorder.is_recording():
-            output_path = _dated_path(self.config.clips_dir, ".mp4")
-            try:
-                self._recorder.start_recording(output_path, self.config.record_clip_s)
-                LOGGER.info(f"Recording started: {output_path.name}")
-            except RuntimeError:
-                LOGGER.warning("Recording already in progress")
-            except FileNotFoundError as e:
-                LOGGER.error(f"Recording failed (ffmpeg not found): {e}")
+        self._ensure_recording(now)
+
+    def _ensure_recording(self, now: float) -> None:
+        """Start a clip unless one is running or the last attempt was too recent."""
+        if self._recorder.is_recording() or now - self._last_record_attempt < RECORD_RETRY_S:
+            return
+        self._last_record_attempt = now
+        output_path = _dated_path(self.config.clips_dir, ".mp4")
+        try:
+            self._recorder.start_recording(output_path, self.config.record_max_s)
+            LOGGER.info(f"Recording started: {output_path.parent.name}/{output_path.name}")
+        except RuntimeError:
+            LOGGER.warning("Recording already in progress")
+        except FileNotFoundError as e:
+            LOGGER.error(f"Recording failed (ffmpeg not found): {e}")
 
     def _handle_cooldown(self) -> None:
         """Called when alert enters cooldown (all inputs quiet)."""

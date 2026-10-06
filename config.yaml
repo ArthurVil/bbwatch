@@ -28,6 +28,7 @@ alerts:
   cooldown_s: 1.0
   motion_triggers_alert: true       # Sustained motion also triggers an alert (and a recording)
   motion_min_s: 1.0                 # Motion must persist this long to count (filters lighting flicker)
+  record_max_s: 300                 # Clips run until the alert clears, capped at this length (then roll over)
   health_timeout_s: 3.0
   overlay_fps: 15                  # Must match -framerate of the overlay pipe input in the go2rtc config
   overlay_width: 1280               # Must match video resolution AND -video_size in the go2rtc config

@@ -98,7 +98,10 @@ class AlertConfig(StrictModel):
     motion_min_s: float = Field(default=1.0, ge=0.0, le=60.0)
 
     # Actions
-    record_clip_s: float = Field(default=10.0, ge=1.0)
+    # A clip runs while the alert is active (triggered + cooldown) and stops
+    # when it clears; record_max_s caps one file. An alert outlasting the
+    # cap rolls over into a new clip.
+    record_max_s: float = Field(default=300.0, ge=10.0, le=3600.0)
     screenshot_on_peak: bool = Field(default=True)
     health_timeout_s: float = Field(default=10.0, ge=1.0)
 

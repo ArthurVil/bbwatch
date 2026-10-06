@@ -103,7 +103,7 @@ class Recorder(Protocol):
         """
         ...
 
-    def start_recording(self, output_path: Path, duration_sec: float) -> None:
+    def start_recording(self, output_path: Path, max_duration_s: float) -> None:
         """Start a background clip recording.
 
         Raises:
@@ -166,7 +166,7 @@ class FFmpegRecorder:
         if proc.returncode != 0:
             raise subprocess.CalledProcessError(proc.returncode, "ffmpeg")
 
-    def build_command(self, part_path: Path, duration_sec: float) -> list[str]:
+    def build_command(self, part_path: Path, max_duration_s: float) -> list[str]:
         """FFmpeg command for one clip.
 
         Video is stream-copied (no CPU cost). Audio is transcoded to AAC:
@@ -179,7 +179,7 @@ class FFmpegRecorder:
             "-hide_banner", "-loglevel", "error",
             "-rtsp_transport", "tcp",
             "-i", self.stream_url,
-            "-t", str(int(duration_sec)),
+            "-t", str(int(max_duration_s)),
             "-map", "0:v:0", "-map", "0:a:0?",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "64k",
@@ -188,7 +188,7 @@ class FFmpegRecorder:
             str(part_path),
         ]
 
-    def start_recording(self, output_path: Path, duration_sec: float) -> None:
+    def start_recording(self, output_path: Path, max_duration_s: float) -> None:
         with self._lock:
             if self._current is not None and self._current.process.poll() is None:
                 raise RuntimeError("Already recording")
@@ -196,7 +196,7 @@ class FFmpegRecorder:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             part_path = part_path_for(output_path)
             process = subprocess.Popen(
-                self.build_command(part_path, duration_sec),
+                self.build_command(part_path, max_duration_s),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
@@ -286,11 +286,11 @@ class MockRecorder:
     def capture_frame(self, output_path: Path) -> None:
         self.capture_frame_calls.append(output_path)
 
-    def start_recording(self, output_path: Path, duration_sec: float) -> None:
+    def start_recording(self, output_path: Path, max_duration_s: float) -> None:
         if self._recording:
             raise RuntimeError("Already recording")
         self._recording = True
-        self.start_recording_calls.append((output_path, duration_sec))
+        self.start_recording_calls.append((output_path, max_duration_s))
 
     def is_recording(self) -> bool:
         return self._recording

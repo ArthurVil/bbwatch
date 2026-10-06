@@ -46,7 +46,7 @@ def _wait_for(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
 
 
 def _fake_ffmpeg(script: str) -> Callable[[FFmpegRecorder, Path, float], list[str]]:
-    def build(self: FFmpegRecorder, part_path: Path, duration_sec: float) -> list[str]:
+    def build(self: FFmpegRecorder, part_path: Path, max_duration_s: float) -> list[str]:
         return [sys.executable, "-c", script, str(part_path)]
 
     return build

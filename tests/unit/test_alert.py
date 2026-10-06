@@ -166,7 +166,7 @@ class TestAlertManager:
         assert len(recorder.start_recording_calls) == 1
         path, duration = recorder.start_recording_calls[0]
         assert path.suffix == ".mp4"
-        assert duration == manager.config.record_clip_s
+        assert duration == manager.config.record_max_s
 
     def test_recording_stops_on_idle(self, manager, recorder):
         """Recording should stop when alert returns to idle."""
@@ -434,3 +434,77 @@ class TestMotionTrigger:
         assert manager.current_state in set(AlertState)
         # Never two concurrent recordings: MockRecorder raises on a second start.
         assert len(recorder.start_recording_calls) >= 1
+
+
+class TestClipLength:
+    """Clips run for the whole alert, capped at record_max_s with rollover."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        return AlertConfig(
+            status_file=tmp_path / "status.json",
+            clips_dir=tmp_path / "clips",
+            screenshots_dir=tmp_path / "screenshots",
+            trigger_high=0.1,
+            trigger_low=0.05,
+            cooldown_s=1.0,
+            screenshot_on_peak=False,
+        )
+
+    @pytest.fixture
+    def recorder(self):
+        return MockRecorder()
+
+    @pytest.fixture
+    def manager(self, config, recorder):
+        return AlertManager(config, recorder=recorder)
+
+    def test_clip_capped_at_record_max_s(self, manager, recorder):
+        manager.process_intensity(0.2)
+        _, max_s = recorder.start_recording_calls[0]
+        assert max_s == 300.0
+
+    def test_clip_saved_in_day_folder(self, manager, recorder, config):
+        manager.process_intensity(0.2)
+        path, _ = recorder.start_recording_calls[0]
+        assert path.parent.parent == config.clips_dir
+        assert len(path.parent.name) == len("2026-10-06")
+
+    def test_rollover_when_cap_reached_during_alert(self, manager, recorder):
+        with patch("bbwatch.alert.time.time") as t:
+            t.return_value = 0.0
+            manager.process_intensity(0.2)
+            recorder.finish()  # ffmpeg hit -t record_max_s and exited
+            t.return_value = 300.0
+            manager.process_intensity(0.2)
+
+        assert len(recorder.start_recording_calls) == 2
+
+    def test_no_rollover_during_cooldown(self, manager, recorder):
+        with patch("bbwatch.alert.time.time") as t:
+            t.return_value = 0.0
+            manager.process_intensity(0.2)
+            t.return_value = 300.0
+            manager.process_intensity(0.01)  # cooldown
+            recorder.finish()
+            t.return_value = 300.5
+            manager.process_intensity(0.01)
+
+        assert len(recorder.start_recording_calls) == 1
+
+    def test_failed_clip_retry_is_rate_limited(self, manager, recorder):
+        """Failure path: ffmpeg dying instantly (stream down) must not be respawned at loop rate."""
+        with patch("bbwatch.alert.time.time") as t:
+            t.return_value = 0.0
+            manager.process_intensity(0.2)
+            for i in range(1, 40):  # 2 s of updates at 20 Hz, each time ffmpeg already dead
+                recorder.finish()
+                t.return_value = i * 0.05
+                manager.process_intensity(0.2)
+            assert len(recorder.start_recording_calls) == 1
+
+            recorder.finish()
+            t.return_value = 5.1  # past RECORD_RETRY_S
+            manager.process_intensity(0.2)
+
+        assert len(recorder.start_recording_calls) == 2
