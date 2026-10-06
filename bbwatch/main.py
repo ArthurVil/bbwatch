@@ -375,22 +375,25 @@ class BabyMonitor:
                 if self._overlay_controller is not None:
                     self._overlay_controller.update()
 
+                # Motion feeds the alert state machine (and so clip recording)
+                # whether or not the dynamic overlay is enabled.
+                motion_level = 0.0
+                motion_detected = False
+                if self._motion_detector:
+                    motion_level = self._motion_detector.get_current_motion()
+                    motion_detected = motion_level > self.config.motion.motion_threshold_percent
+                    if self._alert_manager:
+                        self._alert_manager.process_motion(motion_detected)
+
                 # --- Update Dynamic Data ---
                 if self._overlay_generator and self._running:
-                    # Get motion level
-                    motion_level = 0.0
-                    motion_detected = False
-                    if self._motion_detector:
-                        motion_level = self._motion_detector.get_current_motion()
-                        motion_detected = motion_level > self.config.motion.motion_threshold_percent
-
-                    # Get audio level and alert status
+                    # Get audio level and cry status (audio only: motion has its own indicator)
                     audio_level = 0.0
                     audio_alert = False
                     latency_ms = None
                     if self._alert_manager:
                         audio_level = self._alert_manager.current_intensity
-                        audio_alert = self._alert_manager.alert_active
+                        audio_alert = self._alert_manager.audio_active
                         latency_ms = self._alert_manager.last_latency_ms
 
                     # Update overlay

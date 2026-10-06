@@ -91,6 +91,12 @@ class AlertConfig(StrictModel):
     # Timing
     cooldown_s: float = Field(default=5.0, ge=0.0)
 
+    # Motion as an alert source (alongside audio). Motion must stay above
+    # motion.motion_threshold_percent for motion_min_s to count, which
+    # filters lighting flicker and IR mode switches.
+    motion_triggers_alert: bool = Field(default=True)
+    motion_min_s: float = Field(default=1.0, ge=0.0, le=60.0)
+
     # Actions
     record_clip_s: float = Field(default=10.0, ge=1.0)
     screenshot_on_peak: bool = Field(default=True)

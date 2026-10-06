@@ -48,10 +48,22 @@ class AlertStatus:
     alert_active: bool  # True if TRIGGERED (compatibility)
     timestamp: float
     intensity: float
+    trigger_source: str | None = None  # "audio" | "motion" | "both" while an input is hot
 
 
 class AlertManager:
-    """Manages alert state transitions and side effects."""
+    """Manages alert state transitions and side effects.
+
+    Two inputs drive one IDLE/TRIGGERED/COOLDOWN state machine:
+
+    - audio: ``process_intensity`` with trigger_high/trigger_low hysteresis
+      (watchdog observer thread)
+    - motion: ``process_motion``, hot once motion has been sustained for
+      ``motion_min_s`` (main loop thread)
+
+    The alert is active while either input is hot; it enters cooldown when
+    both are quiet and returns to idle after ``cooldown_s``.
+    """
 
     def __init__(self, config: AlertConfig, recorder: Recorder | None = None):
         """Initialize alert manager.
@@ -66,7 +78,13 @@ class AlertManager:
         self._cooldown_start_time = 0.0
         self._current_intensity = 0.0
         self._last_latency_ms: float | None = None
+        self._audio_hot = False
+        self._motion_hot = False
+        self._motion_since: float | None = None
         self._recorder: Recorder = recorder if recorder is not None else FFmpegRecorder(config.stream_url)
+        # Serializes state-machine updates: audio arrives on the watchdog
+        # observer thread, motion on the main loop thread.
+        self._state_lock = threading.RLock()
         # Guards status.json writes: process_intensity() runs on the watchdog
         # observer thread, heartbeat() on the main loop thread. Both write to
         # the same fixed temp-file path — without a lock, concurrent writes
@@ -85,13 +103,30 @@ class AlertManager:
 
     @property
     def alert_active(self) -> bool:
-        """Check if alert is currently triggered."""
+        """Check if alert is currently triggered (by any source)."""
         return self._state == AlertState.TRIGGERED
+
+    @property
+    def audio_active(self) -> bool:
+        """True while the audio input is above its hysteresis band (cry indicator)."""
+        return self._audio_hot
 
     @property
     def current_state(self) -> AlertState:
         """Get current alert state."""
         return self._state
+
+    @property
+    def trigger_source(self) -> str | None:
+        """Which inputs are currently hot: "audio", "motion", "both" or None."""
+        motion = self._motion_hot and self.config.motion_triggers_alert
+        if self._audio_hot and motion:
+            return "both"
+        if self._audio_hot:
+            return "audio"
+        if motion:
+            return "motion"
+        return None
 
     @property
     def recording_error(self) -> str | None:
@@ -111,8 +146,8 @@ class AlertManager:
         """Update state based on new intensity measurement.
 
         Implements hysteresis:
-        - Triggers when intensity > trigger_high
-        - Clears when intensity < trigger_low
+        - Audio becomes hot when intensity > trigger_high
+        - Audio goes quiet when intensity < trigger_low
 
         Args:
             intensity: Current RMS intensity (0.0 - 1.0).
@@ -121,30 +156,49 @@ class AlertManager:
             Current status object.
         """
         now = time.time()
-        self._current_intensity = intensity
-        if capture_ts is not None:
-            self._last_latency_ms = (now - capture_ts) * 1000.0
+        with self._state_lock:
+            self._current_intensity = intensity
+            if capture_ts is not None:
+                self._last_latency_ms = (now - capture_ts) * 1000.0
 
-        if self._state == AlertState.IDLE:
             if intensity > self.config.trigger_high:
-                self._transition_to(AlertState.TRIGGERED, now, intensity)
+                self._audio_hot = True
+            elif intensity < self.config.trigger_low:
+                self._audio_hot = False
 
-        elif self._state == AlertState.TRIGGERED:
-            if intensity < self.config.trigger_low:
-                self._transition_to(AlertState.COOLDOWN, now, intensity)
-            else:
-                # Still triggered, update timestamp (keep alive)
-                self._last_trigger_time = now
-
-        elif self._state == AlertState.COOLDOWN:
-            if intensity > self.config.trigger_high:
-                # Re-trigger immediately
-                self._transition_to(AlertState.TRIGGERED, now, intensity)
-            elif now - self._cooldown_start_time > self.config.cooldown_s:
-                self._transition_to(AlertState.IDLE, now, intensity)
-
-        status = self._current_status(now)
+            self._evaluate(now)
+            status = self._current_status(now)
         self._write_status(status)
+        return status
+
+    def process_motion(self, motion_detected: bool) -> AlertStatus:
+        """Update state from the motion detector (called at main-loop rate).
+
+        Motion only counts once it has persisted for ``motion_min_s``, which
+        filters single-frame flicker (lighting changes, IR switching). Only
+        state changes are written to status.json here — the main loop
+        heartbeat refreshes it every second anyway.
+
+        Args:
+            motion_detected: Current motion level is above the motion threshold.
+
+        Returns:
+            Current status object.
+        """
+        now = time.time()
+        with self._state_lock:
+            if motion_detected:
+                if self._motion_since is None:
+                    self._motion_since = now
+                self._motion_hot = now - self._motion_since >= self.config.motion_min_s
+            else:
+                self._motion_since = None
+                self._motion_hot = False
+
+            changed = self._evaluate(now)
+            status = self._current_status(now)
+        if changed:
+            self._write_status(status)
         return status
 
     def heartbeat(self) -> AlertStatus:
@@ -158,7 +212,8 @@ class AlertManager:
         loop calls this periodically so liveness reflects the process, not
         audio activity specifically.
         """
-        status = self._current_status(time.time())
+        with self._state_lock:
+            status = self._current_status(time.time())
         self._write_status(status)
         return status
 
@@ -170,14 +225,47 @@ class AlertManager:
             alert_active=(self._state == AlertState.TRIGGERED),
             timestamp=now,
             intensity=self._current_intensity,
+            trigger_source=self.trigger_source,
         )
 
-    def _transition_to(self, new_state: AlertState, now: float, intensity: float) -> None:
+    def _evaluate(self, now: float) -> bool:
+        """Advance the state machine from the current inputs. Caller holds _state_lock.
+
+        Returns:
+            True if the state changed.
+        """
+        before = self._state
+        active = self.trigger_source is not None
+
+        if self._state == AlertState.IDLE:
+            if active:
+                self._transition_to(AlertState.TRIGGERED, now)
+
+        elif self._state == AlertState.TRIGGERED:
+            if not active:
+                self._transition_to(AlertState.COOLDOWN, now)
+            else:
+                # Still triggered, update timestamp (keep alive)
+                self._last_trigger_time = now
+
+        elif self._state == AlertState.COOLDOWN:
+            if active:
+                # Re-trigger immediately
+                self._transition_to(AlertState.TRIGGERED, now)
+            elif now - self._cooldown_start_time > self.config.cooldown_s:
+                self._transition_to(AlertState.IDLE, now)
+
+        return self._state != before
+
+    def _transition_to(self, new_state: AlertState, now: float) -> None:
         """Handle state transition side effects."""
-        LOGGER.info(f"Alert State: {self._state.value} -> {new_state.value} (intensity={intensity:.3f})")
+        LOGGER.info(
+            f"Alert State: {self._state.value} -> {new_state.value} "
+            f"(source={self.trigger_source}, intensity={self._current_intensity:.3f})"
+        )
 
         if new_state == AlertState.TRIGGERED:
-            self._handle_trigger(intensity)
+            self._handle_trigger()
             self._last_trigger_time = now
 
         elif new_state == AlertState.COOLDOWN:
@@ -200,9 +288,9 @@ class AlertManager:
         except OSError as e:
             LOGGER.error(f"Failed to write status file: {e}")
 
-    def _handle_trigger(self, intensity: float) -> None:
+    def _handle_trigger(self) -> None:
         """Called when alert is triggered."""
-        LOGGER.info("🚨 ALERT TRIGGERED - Starting recording/screenshot")
+        LOGGER.info(f"🚨 ALERT TRIGGERED (source={self.trigger_source}) - Starting recording/screenshot")
 
         if self.config.screenshot_on_peak:
             threading.Thread(target=self._take_screenshot, daemon=True).start()
@@ -218,7 +306,7 @@ class AlertManager:
                 LOGGER.error(f"Recording failed (ffmpeg not found): {e}")
 
     def _handle_cooldown(self) -> None:
-        """Called when alert enters cooldown (intensity drops)."""
+        """Called when alert enters cooldown (all inputs quiet)."""
         LOGGER.info("Alert signal dropped - entering cooldown")
 
     def _handle_idle(self) -> None:

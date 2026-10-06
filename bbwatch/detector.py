@@ -296,7 +296,7 @@ class SegmentHandler(FileSystemEventHandler):
         if self.overlay_generator:
             self.overlay_generator.update_state(
                 motion_detected=False,  # We don't know motion here
-                audio_alert=self.alert_manager.alert_active,
+                audio_alert=self.alert_manager.audio_active,
                 motion_level=0.0,  # Handled by main loop
                 audio_level=result.filtered_rms,
             )
