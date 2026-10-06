@@ -76,6 +76,9 @@ services:
     volumes:
       - ..:/app
       - ../data:/app/data
+      # Host timezone, so clip/screenshot names (YYYY-MM-DD/HHMMSS) and log
+      # timestamps are in local time rather than the image's UTC.
+      - /etc/localtime:/etc/localtime:ro
     # WAV segments (audio.py's SlidingWindowCapture) are ephemeral scratch
     # data: each is read once by SegmentHandler.on_closed within
     # milliseconds of being closed, then deleted immediately if silent
