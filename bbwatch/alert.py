@@ -12,16 +12,23 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from pathlib import Path
 
 from bbwatch.config import AlertConfig
-from bbwatch.recording import FFmpegRecorder, Recorder
+from bbwatch.recording import FFmpegRecorder, Recorder, recover_partial_clips
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _timestamp_filename() -> str:
-    """Generate timestamp string for filenames (YYYYMMDD_HHMMSS)."""
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+def _dated_path(base_dir: Path, suffix: str) -> Path:
+    """Output path grouped by day: ``base_dir/YYYY-MM-DD/HHMMSS<suffix>``.
+
+    Day folders keep the clips/screenshots browsable once uploaded.
+    """
+    now = datetime.now()
+    day_dir = base_dir / now.strftime("%Y-%m-%d")
+    day_dir.mkdir(parents=True, exist_ok=True)
+    return day_dir / f"{now.strftime('%H%M%S')}{suffix}"
 
 
 class AlertState(str, enum.Enum):
@@ -69,6 +76,7 @@ class AlertManager:
         # Pre-create output directories
         self.config.screenshots_dir.mkdir(parents=True, exist_ok=True)
         self.config.clips_dir.mkdir(parents=True, exist_ok=True)
+        recover_partial_clips(self.config.clips_dir)
 
     @property
     def current_intensity(self) -> float:
@@ -84,6 +92,15 @@ class AlertManager:
     def current_state(self) -> AlertState:
         """Get current alert state."""
         return self._state
+
+    @property
+    def recording_error(self) -> str | None:
+        """Last clip recording failure, None if the most recent clip succeeded."""
+        return self._recorder.last_error()
+
+    def shutdown(self) -> None:
+        """Finalize any in-progress clip (called on monitor stop)."""
+        self._recorder.stop_recording()
 
     @property
     def last_latency_ms(self) -> float | None:
@@ -191,7 +208,7 @@ class AlertManager:
             threading.Thread(target=self._take_screenshot, daemon=True).start()
 
         if not self._recorder.is_recording():
-            output_path = self.config.clips_dir / f"{_timestamp_filename()}.mp4"
+            output_path = _dated_path(self.config.clips_dir, ".mp4")
             try:
                 self._recorder.start_recording(output_path, self.config.record_clip_s)
                 LOGGER.info(f"Recording started: {output_path.name}")
@@ -210,7 +227,7 @@ class AlertManager:
         self._recorder.stop_recording()
 
     def _take_screenshot(self) -> None:
-        output_path = self.config.screenshots_dir / f"{_timestamp_filename()}.jpg"
+        output_path = _dated_path(self.config.screenshots_dir, ".jpg")
         try:
             self._recorder.capture_frame(output_path)
             LOGGER.info(f"Screenshot saved: {output_path.name}")

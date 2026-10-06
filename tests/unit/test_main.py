@@ -372,6 +372,7 @@ class TestHealthCheck:
         mock_components["motion"].return_value.get_current_motion.return_value = 0.0
         mock_components["motion"].return_value.is_healthy.return_value = True
         mock_components["capture"].return_value.is_running.return_value = True
+        mock_components["alert"].return_value.recording_error = None
 
         with patch("bbwatch.main.time.time", side_effect=_health_check_time_sequence()):
             with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
@@ -379,3 +380,27 @@ class TestHealthCheck:
 
         messages = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
         assert not any("UNHEALTHY" in m for m in messages)
+
+    def test_logs_error_when_clip_recording_failed(self, monitor, mock_components, log_capture):
+        """Failure path: a failed ffmpeg clip must keep being reported, not just logged once."""
+        monitor.config.fake_hardware = True
+        mock_components["motion"].return_value.get_current_motion.return_value = 0.0
+        mock_components["motion"].return_value.is_healthy.return_value = True
+        mock_components["capture"].return_value.is_running.return_value = True
+        mock_components["alert"].return_value.recording_error = "ffmpeg exit 1: connection refused"
+
+        with patch("bbwatch.main.time.time", side_effect=_health_check_time_sequence()):
+            with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
+                monitor.run()
+
+        messages = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
+        assert any("Clip recording UNHEALTHY" in m and "connection refused" in m for m in messages)
+
+    def test_stop_finalizes_in_progress_clip(self, monitor, mock_components):
+        monitor.config.fake_hardware = True
+        mock_components["motion"].return_value.get_current_motion.return_value = 0.0
+
+        with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
+            monitor.run()
+
+        mock_components["alert"].return_value.shutdown.assert_called_once()
