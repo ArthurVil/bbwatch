@@ -90,6 +90,9 @@ class AlertManager:
         self._motion_frame_times: deque[float] = deque()
         self._last_motion_sample: int | None = None
         self._last_record_attempt = float("-inf")
+        self._clip_started_at = float("-inf")
+        # Set when the alert clears before record_min_s: stop the clip then
+        self._stop_due_at: float | None = None
         self._recorder: Recorder = recorder if recorder is not None else FFmpegRecorder(config.stream_url)
         # Serializes state-machine updates: audio arrives on the watchdog
         # observer thread, motion on the main loop thread.
@@ -144,6 +147,7 @@ class AlertManager:
 
     def shutdown(self) -> None:
         """Finalize any in-progress clip (called on monitor stop)."""
+        self._stop_due_at = None
         self._recorder.stop_recording()
 
     @property
@@ -251,6 +255,11 @@ class AlertManager:
         before = self._state
         active = self.trigger_source is not None
 
+        if self._stop_due_at is not None and now >= self._stop_due_at:
+            self._stop_due_at = None
+            LOGGER.info("Minimum clip length reached - stopping recording")
+            self._recorder.stop_recording()
+
         if self._state == AlertState.IDLE:
             if active:
                 self._transition_to(AlertState.TRIGGERED, now)
@@ -289,7 +298,7 @@ class AlertManager:
             self._cooldown_start_time = now
 
         elif new_state == AlertState.IDLE:
-            self._handle_idle()
+            self._handle_idle(now)
 
         self._state = new_state
 
@@ -311,6 +320,8 @@ class AlertManager:
         if self.config.screenshot_on_peak:
             threading.Thread(target=self._take_screenshot, daemon=True).start()
 
+        # Re-triggered before a short clip's minimum length ran out: keep it going
+        self._stop_due_at = None
         self._ensure_recording(now)
 
     def _ensure_recording(self, now: float) -> None:
@@ -321,6 +332,7 @@ class AlertManager:
         output_path = _dated_path(self.config.clips_dir, ".mp4")
         try:
             self._recorder.start_recording(output_path, self.config.record_max_s)
+            self._clip_started_at = now
             LOGGER.info(f"Recording started: {output_path.parent.name}/{output_path.name}")
         except RuntimeError:
             LOGGER.warning("Recording already in progress")
@@ -331,8 +343,13 @@ class AlertManager:
         """Called when alert enters cooldown (all inputs quiet)."""
         LOGGER.info("Alert signal dropped - entering cooldown")
 
-    def _handle_idle(self) -> None:
+    def _handle_idle(self, now: float) -> None:
         """Called when alert clears completely."""
+        stop_at = self._clip_started_at + self.config.record_min_s
+        if self._recorder.is_recording() and now < stop_at:
+            LOGGER.info(f"Alert cleared - recording continues {stop_at - now:.0f} s more (record_min_s)")
+            self._stop_due_at = stop_at
+            return
         LOGGER.info("Alert cleared - stopping recording")
         self._recorder.stop_recording()
 

@@ -30,6 +30,7 @@ alerts:
   motion_min_frames: 3              # Alert once this many frames above motion_threshold_percent...
   motion_window_s: 1.0              # ...fall within this window (not necessarily consecutive)
   record_max_s: 300                 # Clips run until the alert clears, capped at this length (then roll over)
+  record_min_s: 15                  # ...but at least this long, so a short alert still gives usable footage
   health_timeout_s: 3.0
   overlay_fps: 15                  # Must match -framerate of the overlay pipe input in the go2rtc config
   overlay_width: 1280               # Must match video resolution AND -video_size in the go2rtc config

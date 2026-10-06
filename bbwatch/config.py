@@ -105,6 +105,10 @@ class AlertConfig(StrictModel):
     # when it clears; record_max_s caps one file. An alert outlasting the
     # cap rolls over into a new clip.
     record_max_s: float = Field(default=300.0, ge=10.0, le=3600.0)
+    # Keep recording at least this long after a clip starts, even if the
+    # alert clears sooner: ffmpeg needs 1-2 s just to connect, so a short
+    # sound spike would otherwise leave a header-only clip.
+    record_min_s: float = Field(default=15.0, ge=0.0, le=300.0)
     screenshot_on_peak: bool = Field(default=True)
     health_timeout_s: float = Field(default=10.0, ge=1.0)
 

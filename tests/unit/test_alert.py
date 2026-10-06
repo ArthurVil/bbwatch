@@ -24,6 +24,7 @@ class TestAlertManager:
             trigger_high=0.1,
             trigger_low=0.05,
             cooldown_s=1.0,  # Short cooldown for testing
+            record_min_s=0.0,  # stop exactly at idle; minimum length tested separately
         )
 
     @pytest.fixture
@@ -279,6 +280,7 @@ class TestMotionTrigger:
             cooldown_s=1.0,
             motion_min_frames=3,
             motion_window_s=1.0,
+            record_min_s=0.0,
             screenshot_on_peak=False,
         )
 
@@ -458,6 +460,7 @@ class TestClipLength:
             trigger_low=0.05,
             cooldown_s=1.0,
             screenshot_on_peak=False,
+            record_min_s=0.0,
         )
 
     @pytest.fixture
@@ -518,3 +521,82 @@ class TestClipLength:
 
         assert len(recorder.start_recording_calls) == 2
 
+
+class TestMinimumClipLength:
+    """A short alert must still produce a usable clip (ffmpeg needs 1-2 s just to connect)."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        return AlertConfig(
+            status_file=tmp_path / "status.json",
+            clips_dir=tmp_path / "clips",
+            screenshots_dir=tmp_path / "screenshots",
+            trigger_high=0.1,
+            trigger_low=0.05,
+            cooldown_s=1.0,
+            record_min_s=15.0,
+            screenshot_on_peak=False,
+        )
+
+    @pytest.fixture
+    def recorder(self):
+        return MockRecorder()
+
+    @pytest.fixture
+    def manager(self, config, recorder):
+        return AlertManager(config, recorder=recorder)
+
+    def test_short_alert_keeps_recording_until_min_length(self, manager, recorder):
+        with patch("bbwatch.alert.time.time") as t:
+            t.return_value = 0.0
+            manager.process_intensity(0.2)  # trigger, clip starts at t=0
+            t.return_value = 0.5
+            manager.process_intensity(0.01)  # cooldown
+            t.return_value = 2.0
+            manager.process_intensity(0.01)  # idle at t=2 — well before 15 s
+            assert manager.current_state == AlertState.IDLE
+            assert recorder.stop_recording_calls == 0
+
+            t.return_value = 14.9
+            manager.process_motion(False, sample_id=1)
+            assert recorder.stop_recording_calls == 0
+            t.return_value = 15.0
+            manager.process_motion(False, sample_id=2)
+
+        assert recorder.stop_recording_calls == 1
+
+    def test_long_alert_stops_at_idle(self, manager, recorder):
+        with patch("bbwatch.alert.time.time") as t:
+            t.return_value = 0.0
+            manager.process_intensity(0.2)
+            t.return_value = 20.0
+            manager.process_intensity(0.01)  # cooldown
+            t.return_value = 21.5
+            manager.process_intensity(0.01)  # idle after record_min_s
+
+        assert recorder.stop_recording_calls == 1
+
+    def test_retrigger_during_min_length_keeps_same_clip(self, manager, recorder):
+        with patch("bbwatch.alert.time.time") as t:
+            t.return_value = 0.0
+            manager.process_intensity(0.2)
+            t.return_value = 0.5
+            manager.process_intensity(0.01)
+            t.return_value = 2.0
+            manager.process_intensity(0.01)  # idle, stop pending at t=15
+            t.return_value = 5.0
+            manager.process_intensity(0.2)  # re-trigger: pending stop cancelled
+            t.return_value = 16.0
+            manager.process_intensity(0.2)  # still triggered past the old deadline
+
+        assert recorder.stop_recording_calls == 0
+        assert len(recorder.start_recording_calls) == 1
+
+    def test_shutdown_stops_immediately(self, manager, recorder):
+        with patch("bbwatch.alert.time.time") as t:
+            t.return_value = 0.0
+            manager.process_intensity(0.2)
+            manager.shutdown()
+
+        assert recorder.stop_recording_calls == 1
+        assert not recorder.is_recording()
