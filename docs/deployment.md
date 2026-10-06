@@ -81,9 +81,11 @@ docker compose -f docker/docker-compose.yml up -d
 
 ## 5. Alert Recordings & Google Drive Upload (optional)
 
-When an alert triggers (sustained cry **or** sustained motion), bbwatch records
+When an alert triggers (cry **or** motion), bbwatch records
 the `babycam` stream (video + overlay + mic audio) until the alert clears,
-capped at `alerts.record_max_s` (default 5 min) per file:
+capped at `alerts.record_max_s` (default 5 min) per file. Motion counts once `alerts.motion_min_frames`
+frames (default 3) within `alerts.motion_window_s` (1 s) change more than
+`motion.motion_threshold_percent` (1 %) of the image:
 
 ```
 data/clips/YYYY-MM-DD/HHMMSS.mp4        # finished clips
@@ -91,7 +93,8 @@ data/clips/YYYY-MM-DD/.HHMMSS.mp4.part  # clip being recorded (hidden)
 data/screenshots/YYYY-MM-DD/HHMMSS.jpg
 ```
 
-Tune with `alerts.motion_triggers_alert`, `alerts.motion_min_s` and
+Tune with `motion.motion_threshold_percent`, `alerts.motion_min_frames`,
+`alerts.motion_window_s` and
 `alerts.record_max_s` in `config.yaml`.
 
 To view recordings from anywhere, a host-side systemd timer uploads finished

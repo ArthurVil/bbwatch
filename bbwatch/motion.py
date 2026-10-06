@@ -118,6 +118,8 @@ class MotionDetector:
 
         self._prev_gray: np.ndarray | None = None
         self._current_motion: float = 0.0
+        # Incremented once per analysed frame, so pollers can count frames, not polls
+        self._sample_seq: int = 0
         self._motion_history: deque[float] = deque(maxlen=history_len)
         self._lock = Lock()
         # Fixed 3x3 dilate kernel — built once instead of every process_frame() call.
@@ -285,6 +287,7 @@ class MotionDetector:
         with self._lock:
             self._current_motion = motion_percent
             self._motion_history.append(motion_percent)
+            self._sample_seq += 1
 
         return motion_percent, motion_percent > self.motion_threshold_percent
 
@@ -292,6 +295,16 @@ class MotionDetector:
         """Get the most recent motion percentage."""
         with self._lock:
             return self._current_motion
+
+    def get_motion_sample(self) -> tuple[int, float]:
+        """Most recent motion percentage with its frame sequence number.
+
+        The sequence number increases by one per analysed frame, so a caller
+        polling faster than the camera frame rate can tell a new frame from
+        a re-read of the same one.
+        """
+        with self._lock:
+            return self._sample_seq, self._current_motion
 
     def get_history(self) -> list[float]:
         """Get motion history."""

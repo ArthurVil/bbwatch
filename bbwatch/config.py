@@ -91,11 +91,14 @@ class AlertConfig(StrictModel):
     # Timing
     cooldown_s: float = Field(default=5.0, ge=0.0)
 
-    # Motion as an alert source (alongside audio). Motion must stay above
-    # motion.motion_threshold_percent for motion_min_s to count, which
-    # filters lighting flicker and IR mode switches.
+    # Motion as an alert source (alongside audio). Motion counts once at
+    # least motion_min_frames frames within the last motion_window_s are
+    # above motion.motion_threshold_percent. Frames need not be consecutive
+    # (real movement flickers frame to frame), but more than one is
+    # required, which filters a single-frame lighting jump.
     motion_triggers_alert: bool = Field(default=True)
-    motion_min_s: float = Field(default=1.0, ge=0.0, le=60.0)
+    motion_min_frames: int = Field(default=3, ge=1, le=100)
+    motion_window_s: float = Field(default=1.0, gt=0.0, le=10.0)
 
     # Actions
     # A clip runs while the alert is active (triggered + cooldown) and stops

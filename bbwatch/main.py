@@ -380,10 +380,10 @@ class BabyMonitor:
                 motion_level = 0.0
                 motion_detected = False
                 if self._motion_detector:
-                    motion_level = self._motion_detector.get_current_motion()
+                    motion_seq, motion_level = self._motion_detector.get_motion_sample()
                     motion_detected = motion_level > self.config.motion.motion_threshold_percent
                     if self._alert_manager:
-                        self._alert_manager.process_motion(motion_detected)
+                        self._alert_manager.process_motion(motion_detected, sample_id=motion_seq)
 
                 # --- Update Dynamic Data ---
                 if self._overlay_generator and self._running:

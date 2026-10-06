@@ -10,6 +10,7 @@ import logging
 import subprocess
 import threading
 import time
+from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -63,8 +64,9 @@ class AlertManager:
 
     - audio: ``process_intensity`` with trigger_high/trigger_low hysteresis
       (watchdog observer thread)
-    - motion: ``process_motion``, hot once motion has been sustained for
-      ``motion_min_s`` (main loop thread)
+    - motion: ``process_motion``, hot while at least ``motion_min_frames``
+      frames in the last ``motion_window_s`` exceeded the motion threshold
+      (main loop thread)
 
     The alert is active while either input is hot; it enters cooldown when
     both are quiet and returns to idle after ``cooldown_s``.
@@ -85,7 +87,8 @@ class AlertManager:
         self._last_latency_ms: float | None = None
         self._audio_hot = False
         self._motion_hot = False
-        self._motion_since: float | None = None
+        self._motion_frame_times: deque[float] = deque()
+        self._last_motion_sample: int | None = None
         self._last_record_attempt = float("-inf")
         self._recorder: Recorder = recorder if recorder is not None else FFmpegRecorder(config.stream_url)
         # Serializes state-machine updates: audio arrives on the watchdog
@@ -177,29 +180,34 @@ class AlertManager:
         self._write_status(status)
         return status
 
-    def process_motion(self, motion_detected: bool) -> AlertStatus:
+    def process_motion(self, motion_detected: bool, sample_id: int | None = None) -> AlertStatus:
         """Update state from the motion detector (called at main-loop rate).
 
-        Motion only counts once it has persisted for ``motion_min_s``, which
-        filters single-frame flicker (lighting changes, IR switching). Only
-        state changes are written to status.json here — the main loop
-        heartbeat refreshes it every second anyway.
+        Motion is hot while at least ``motion_min_frames`` frames within the
+        last ``motion_window_s`` were above the threshold. They need not be
+        consecutive — real movement flickers frame to frame — but requiring
+        a few filters a single-frame lighting jump. Only state changes are
+        written to status.json here — the main loop heartbeat refreshes it
+        every second anyway.
 
         Args:
             motion_detected: Current motion level is above the motion threshold.
+            sample_id: Frame sequence number from the detector. The main loop
+                polls faster than the camera frame rate; a repeated id is the
+                same frame and is not counted again. None counts every call.
 
         Returns:
             Current status object.
         """
         now = time.time()
         with self._state_lock:
-            if motion_detected:
-                if self._motion_since is None:
-                    self._motion_since = now
-                self._motion_hot = now - self._motion_since >= self.config.motion_min_s
-            else:
-                self._motion_since = None
-                self._motion_hot = False
+            new_frame = sample_id is None or sample_id != self._last_motion_sample
+            self._last_motion_sample = sample_id
+            if motion_detected and new_frame:
+                self._motion_frame_times.append(now)
+            while self._motion_frame_times and now - self._motion_frame_times[0] > self.config.motion_window_s:
+                self._motion_frame_times.popleft()
+            self._motion_hot = len(self._motion_frame_times) >= self.config.motion_min_frames
 
             changed = self._evaluate(now)
             status = self._current_status(now)

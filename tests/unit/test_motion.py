@@ -615,3 +615,26 @@ def test_start_stop(motion_detector, mock_cv2):
         motion_detector.stop()
         assert motion_detector.running is False
         assert mock_thread_inst.join.call_count == 2
+
+
+
+def test_motion_sample_sequence_increments_per_frame(motion_detector, mock_cv2):
+    """get_motion_sample's sequence number lets pollers count frames rather than polls."""
+    mock_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    gray = np.zeros((100, 100), dtype=np.uint8)
+    mock_cv2.cvtColor.return_value = gray
+    mock_cv2.GaussianBlur.return_value = gray
+    mock_cv2.absdiff.return_value = gray
+    mock_cv2.threshold.return_value = (0, gray)
+    mock_cv2.dilate.return_value = gray
+    mock_cv2.countNonZero.side_effect = lambda arr: int(np.count_nonzero(arr))
+
+    seq0, _ = motion_detector.get_motion_sample()
+    motion_detector.process_frame(mock_frame)
+    motion_detector.process_frame(mock_frame)
+    seq2, level = motion_detector.get_motion_sample()
+
+    assert seq2 == seq0 + 2
+    assert level == motion_detector.get_current_motion()
+    # Re-reading without a new frame returns the same sequence number
+    assert motion_detector.get_motion_sample()[0] == seq2

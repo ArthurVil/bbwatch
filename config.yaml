@@ -27,7 +27,8 @@ alerts:
   overlay_dir: overlays
   cooldown_s: 1.0
   motion_triggers_alert: true       # Sustained motion also triggers an alert (and a recording)
-  motion_min_s: 1.0                 # Motion must persist this long to count (filters lighting flicker)
+  motion_min_frames: 3              # Alert once this many frames above motion_threshold_percent...
+  motion_window_s: 1.0              # ...fall within this window (not necessarily consecutive)
   record_max_s: 300                 # Clips run until the alert clears, capped at this length (then roll over)
   health_timeout_s: 3.0
   overlay_fps: 15                  # Must match -framerate of the overlay pipe input in the go2rtc config
@@ -41,7 +42,7 @@ motion:
   threshold: 10                      # Pixel difference threshold (1-255): lower = more sensitive
   blur_size: 5                       # Gaussian blur kernel size (must be odd): higher = less noise
   dilation_iterations: 1             # Morphology iterations to fill gaps (0-10): higher = larger motion blobs
-  motion_threshold_percent: 5.0     # % of changed pixels to trigger (0.1-50): lower = more sensitive
+  motion_threshold_percent: 1.0     # % of changed pixels for a frame to count as motion (0.1-50): lower = more sensitive
   history_len: 10                    # Motion history buffer size (10-1000)
   fps: 15                            # Motion detection frame rate (1-30): higher = more responsive
   # Crop the analysis ROI before diffing. Same absolute movement covers a

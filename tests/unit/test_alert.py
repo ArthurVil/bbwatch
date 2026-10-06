@@ -266,7 +266,7 @@ class TestAlertManager:
 
 
 class TestMotionTrigger:
-    """Motion as a second alert source alongside audio."""
+    """Motion as a second alert source: a few frames above threshold within a window."""
 
     @pytest.fixture
     def config(self, tmp_path):
@@ -277,7 +277,8 @@ class TestMotionTrigger:
             trigger_high=0.1,
             trigger_low=0.05,
             cooldown_s=1.0,
-            motion_min_s=1.0,
+            motion_min_frames=3,
+            motion_window_s=1.0,
             screenshot_on_peak=False,
         )
 
@@ -289,41 +290,67 @@ class TestMotionTrigger:
     def manager(self, config, recorder):
         return AlertManager(config, recorder=recorder)
 
-    def test_sustained_motion_triggers_and_records(self, manager, recorder):
+    @staticmethod
+    def feed(manager, t, frames, start_seq=0, dt=0.1):
+        """Feed one call per frame: frames is a sequence of motion_detected bools."""
+        seq = start_seq
+        for detected in frames:
+            seq += 1
+            manager.process_motion(detected, sample_id=seq)
+            t.return_value += dt
+        return seq
+
+    def test_few_frames_above_threshold_trigger_and_record(self, manager, recorder):
         with patch("bbwatch.alert.time.time") as t:
             t.return_value = 0.0
-            manager.process_motion(True)
-            assert manager.current_state == AlertState.IDLE  # not sustained yet
-            t.return_value = 1.1
-            status = manager.process_motion(True)
+            self.feed(manager, t, [True, True])
+            assert manager.current_state == AlertState.IDLE  # 2 < motion_min_frames
+            status = manager.process_motion(True, sample_id=3)
 
         assert manager.current_state == AlertState.TRIGGERED
         assert status.trigger_source == "motion"
         assert len(recorder.start_recording_calls) == 1
 
-    def test_motion_blip_does_not_trigger(self, manager, recorder):
-        """A single-frame flicker (lighting, IR switch) must not start a recording."""
+    def test_non_consecutive_frames_still_trigger(self, manager):
+        """Real movement flickers frame to frame — gaps inside the window must not reset the count."""
         with patch("bbwatch.alert.time.time") as t:
             t.return_value = 0.0
-            manager.process_motion(True)
-            t.return_value = 0.5
-            manager.process_motion(False)  # streak broken
-            t.return_value = 0.9
-            manager.process_motion(True)
-            t.return_value = 1.5  # 0.6 s into the new streak
-            manager.process_motion(True)
+            self.feed(manager, t, [True, False, True, False, False, True])
+
+        assert manager.current_state == AlertState.TRIGGERED
+
+    def test_single_frame_spike_does_not_trigger(self, manager, recorder):
+        """A one-frame lighting/exposure jump must not start a recording."""
+        with patch("bbwatch.alert.time.time") as t:
+            t.return_value = 0.0
+            self.feed(manager, t, [False, True] + [False] * 20)
 
         assert manager.current_state == AlertState.IDLE
         assert recorder.start_recording_calls == []
+
+    def test_frames_spread_beyond_window_do_not_trigger(self, manager):
+        with patch("bbwatch.alert.time.time") as t:
+            t.return_value = 0.0
+            self.feed(manager, t, [True, False, False, False, False, False, True], dt=0.3)
+
+        assert manager.current_state == AlertState.IDLE  # 2 frames per 1 s window at most
+
+    def test_repeated_poll_of_same_frame_counts_once(self, manager):
+        """The main loop polls at 20 Hz but frames arrive at ~10 fps: re-reads must not inflate the count."""
+        with patch("bbwatch.alert.time.time") as t:
+            t.return_value = 0.0
+            for _ in range(10):
+                manager.process_motion(True, sample_id=7)
+                t.return_value += 0.05
+
+        assert manager.current_state == AlertState.IDLE
 
     def test_motion_disabled_by_config(self, config, recorder):
         config.motion_triggers_alert = False
         manager = AlertManager(config, recorder=recorder)
         with patch("bbwatch.alert.time.time") as t:
             t.return_value = 0.0
-            manager.process_motion(True)
-            t.return_value = 5.0
-            manager.process_motion(True)
+            self.feed(manager, t, [True] * 10)
 
         assert manager.current_state == AlertState.IDLE
         assert recorder.start_recording_calls == []
@@ -332,33 +359,26 @@ class TestMotionTrigger:
         with patch("bbwatch.alert.time.time") as t:
             t.return_value = 0.0
             manager.process_intensity(0.2)  # audio triggers
-            manager.process_motion(True)
-            t.return_value = 1.5
-            status = manager.process_motion(True)
+            self.feed(manager, t, [True] * 3)
+            status = manager.process_motion(True, sample_id=4)
 
         assert status.trigger_source == "both"
         assert len(recorder.start_recording_calls) == 1
 
     def test_stays_triggered_while_either_input_hot(self, manager, recorder):
-        """Audio going quiet must not end the alert while motion is still sustained."""
+        """Audio going quiet must not end the alert while motion frames keep coming."""
         with patch("bbwatch.alert.time.time") as t:
             t.return_value = 0.0
             manager.process_intensity(0.2)
-            manager.process_motion(True)
-            t.return_value = 1.5
-            manager.process_motion(True)
-            t.return_value = 2.0
+            seq = self.feed(manager, t, [True] * 3)
             manager.process_intensity(0.01)  # audio quiet, motion still hot
             assert manager.current_state == AlertState.TRIGGERED
             assert manager.trigger_source == "motion"
 
-            manager.process_motion(False)  # both quiet -> cooldown
+            # No motion frames for > motion_window_s: motion goes cold -> cooldown
+            seq = self.feed(manager, t, [False] * 11, start_seq=seq)
             assert manager.current_state == AlertState.COOLDOWN
-            t.return_value = 2.5
-            manager.process_motion(False)
-            assert manager.current_state == AlertState.COOLDOWN  # cooldown not elapsed
-            t.return_value = 3.1
-            manager.process_motion(False)
+            self.feed(manager, t, [False] * 11, start_seq=seq)  # > cooldown_s
 
         assert manager.current_state == AlertState.IDLE
         assert recorder.stop_recording_calls == 1
@@ -367,13 +387,7 @@ class TestMotionTrigger:
         """Camera-only deployments: motion calls alone must drive cooldown -> idle."""
         with patch("bbwatch.alert.time.time") as t:
             t.return_value = 0.0
-            manager.process_motion(True)
-            t.return_value = 1.0
-            manager.process_motion(True)
-            t.return_value = 1.2
-            manager.process_motion(False)
-            t.return_value = 2.5
-            manager.process_motion(False)
+            self.feed(manager, t, [True] * 3 + [False] * 30)
 
         assert manager.current_state == AlertState.IDLE
         assert recorder.stop_recording_calls == 1
@@ -381,9 +395,7 @@ class TestMotionTrigger:
     def test_motion_does_not_light_cry_indicator(self, manager):
         with patch("bbwatch.alert.time.time") as t:
             t.return_value = 0.0
-            manager.process_motion(True)
-            t.return_value = 1.0
-            manager.process_motion(True)
+            self.feed(manager, t, [True] * 3)
 
         assert manager.alert_active is True
         assert manager.audio_active is False
@@ -391,19 +403,17 @@ class TestMotionTrigger:
     def test_trigger_source_written_to_status_file(self, manager, config):
         with patch("bbwatch.alert.time.time") as t:
             t.return_value = 0.0
-            manager.process_motion(True)
-            t.return_value = 1.0
-            manager.process_motion(True)
+            self.feed(manager, t, [True] * 3)
 
         data = json.loads(config.status_file.read_text())
         assert data["alert_state"] == "triggered"
         assert data["trigger_source"] == "motion"
 
-    def test_steady_motion_does_not_rewrite_status_every_call(self, manager, config):
+    def test_steady_state_does_not_rewrite_status_every_call(self, manager):
         """process_motion runs at ~20 Hz — only state changes may hit the disk."""
         with patch.object(manager, "_write_status") as write:
-            for _ in range(50):
-                manager.process_motion(False)
+            for i in range(50):
+                manager.process_motion(False, sample_id=i)
         write.assert_not_called()
 
     def test_concurrent_audio_and_motion_updates(self, manager, recorder):
@@ -420,7 +430,7 @@ class TestMotionTrigger:
         def motion():
             try:
                 for i in range(300):
-                    manager.process_motion(i % 3 == 0)
+                    manager.process_motion(i % 3 == 0, sample_id=i)
             except Exception as e:  # pragma: no cover
                 errors.append(e)
 
@@ -432,7 +442,6 @@ class TestMotionTrigger:
 
         assert errors == []
         assert manager.current_state in set(AlertState)
-        # Never two concurrent recordings: MockRecorder raises on a second start.
         assert len(recorder.start_recording_calls) >= 1
 
 
@@ -508,3 +517,4 @@ class TestClipLength:
             manager.process_intensity(0.2)
 
         assert len(recorder.start_recording_calls) == 2
+
