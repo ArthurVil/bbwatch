@@ -9,6 +9,7 @@ from bbwatch.config import (
     AudioConfig,
     BBWatchConfig,
     DetectionConfig,
+    MotionConfig,
     StorageConfig,
 )
 
@@ -80,6 +81,20 @@ class TestStorageConfig:
         assert not config.wav_dir.is_absolute()
 
 
+class TestMotionConfig:
+    """Tests for MotionConfig."""
+
+    def test_equalize_luminosity_defaults_false(self):
+        """Off by default — changes detection sensitivity, so it's opt-in."""
+        assert MotionConfig().equalize_luminosity is False
+
+    def test_clahe_clip_limit_default_matches_opencv_convention(self):
+        """2.0 is OpenCV's typical CLAHE default; also the value measured to
+        avoid amplifying noise on a synthetic dim/noisy scene (see
+        bbwatch/motion.py)."""
+        assert MotionConfig().clahe_clip_limit == 2.0
+
+
 class TestBBWatchConfig:
     """Tests for main BBWatchConfig."""
 
@@ -140,11 +155,30 @@ alerts:
         config = BBWatchConfig.from_yaml(config_file)
         assert config.alerts.cooldown_s == 1.0
 
+    def test_overlay_drop_stale_frames_defaults_true(self):
+        """Default overlay frame policy is drop-stale (bounded latency)."""
+        assert BBWatchConfig().alerts.overlay_drop_stale_frames is True
+
+    def test_overlay_drop_stale_frames_from_yaml(self, tmp_path):
+        """The no-loss opt-out must reach AlertConfig via YAML."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            """
+alerts:
+  overlay_drop_stale_frames: false
+"""
+        )
+        config = BBWatchConfig.from_yaml(config_file)
+        assert config.alerts.overlay_drop_stale_frames is False
+
     def test_shipped_config_yaml_is_valid(self):
         """The config.yaml shipped in the repo must load without errors."""
         repo_config = Path(__file__).parents[2] / "config.yaml"
         config = BBWatchConfig.from_yaml(repo_config)
         assert config.alerts.cooldown_s == 1.0
+        assert config.alerts.overlay_drop_stale_frames is True
+        assert config.motion.equalize_luminosity is False
+        assert config.motion.clahe_clip_limit == 2.0
 
     def test_from_yaml_invalid_yaml(self, tmp_path):
         """Invalid YAML should raise ValueError."""

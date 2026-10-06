@@ -99,8 +99,22 @@ stop:
 logs:
 	docker compose -f docker/docker-compose.yml logs -f
 
+# Restart bbwatch, and go2rtc if installed as a systemd service (see stop's
+# note above for the portability check). Restarting bbwatch alone breaks
+# the overlay compositing: go2rtc's babycam ffmpeg process reads the
+# overlay FIFO as an input, and when bbwatch's old writer closes, ffmpeg
+# sees EOF on that input and never resumes reading it — even after bbwatch
+# reopens the pipe fresh. The video stream then silently stalls (bbwatch's
+# own logs look perfectly healthy) until go2rtc is also restarted. See
+# docs/SETUP_RPI5.md's troubleshooting section for the full story.
 restart:
 	docker compose -f docker/docker-compose.yml restart
+	@if systemctl list-unit-files go2rtc.service >/dev/null 2>&1; then \
+		sudo systemctl restart go2rtc; \
+		echo "go2rtc restarted."; \
+	else \
+		echo "go2rtc.service not installed on this host — nothing to restart."; \
+	fi
 
 # ============================================================================
 # Docker Dev

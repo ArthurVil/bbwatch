@@ -91,8 +91,24 @@ class AlertConfig(StrictModel):
     # Timing
     cooldown_s: float = Field(default=5.0, ge=0.0)
 
+    # Motion as an alert source (alongside audio). Motion counts once at
+    # least motion_min_frames frames within the last motion_window_s are
+    # above motion.motion_threshold_percent. Frames need not be consecutive
+    # (real movement flickers frame to frame), but more than one is
+    # required, which filters a single-frame lighting jump.
+    motion_triggers_alert: bool = Field(default=True)
+    motion_min_frames: int = Field(default=3, ge=1, le=100)
+    motion_window_s: float = Field(default=1.0, gt=0.0, le=10.0)
+
     # Actions
-    record_clip_s: float = Field(default=10.0, ge=1.0)
+    # A clip runs while the alert is active (triggered + cooldown) and stops
+    # when it clears; record_max_s caps one file. An alert outlasting the
+    # cap rolls over into a new clip.
+    record_max_s: float = Field(default=300.0, ge=10.0, le=3600.0)
+    # Keep recording at least this long after a clip starts, even if the
+    # alert clears sooner: ffmpeg needs 1-2 s just to connect, so a short
+    # sound spike would otherwise leave a header-only clip.
+    record_min_s: float = Field(default=15.0, ge=0.0, le=300.0)
     screenshot_on_peak: bool = Field(default=True)
     health_timeout_s: float = Field(default=10.0, ge=1.0)
 
@@ -111,6 +127,11 @@ class AlertConfig(StrictModel):
     # overlay is drawn unscaled in a corner of the frame.
     overlay_width: int = Field(default=640, ge=160, le=3840)
     overlay_height: int = Field(default=480, ge=120, le=2160)
+    # Frame delivery policy when the overlay pipe's reader (FFmpeg/go2rtc)
+    # falls behind: True drops the current frame and sends the freshest
+    # state next pass (bounded latency, some loss); False waits for the
+    # reader, delivering every frame with no loss but unbounded latency.
+    overlay_drop_stale_frames: bool = Field(default=True)
 
     @field_validator("trigger_low")
     @classmethod
@@ -164,6 +185,64 @@ class MotionConfig(StrictModel):
         description="Explicit RTSP URL for motion detection; when empty, derived from an RTSP audio URL",
     )
 
+    # Luminosity normalization before diffing. Raw frame differencing can't
+    # tell "the whole frame got brighter" (auto-exposure converging in low
+    # light, AC-light flicker) from real motion.
+    #
+    # History: two earlier revisions of this feature recomputed the
+    # equalization adaptively on every frame (first CLAHE, then global
+    # cv2.equalizeHist); the second was deployed and reported live as
+    # near-constant false-motion flicker after dimming a room. The PROVEN
+    # cause and fix is clahe_clip_limit (see below) — measure there, not
+    # here, before assuming freezing is what protects you.
+    #
+    # The current approach also calibrates a brightness-equalization LUT
+    # ONCE from the first frame and freezes it for the process's life
+    # (bbwatch/motion.py's MotionDetector._build_luminosity_lut), as
+    # additional, unproven-by-test insurance: it removes any dependence on
+    # two real frames' histograms staying statistically similar (true for
+    # simple i.i.d. per-pixel noise, tested here, but not necessarily true
+    # for compression artifacts, correlated sensor read noise, or
+    # continuous micro-exposure drift — none of which the current test
+    # models). The tradeoff freezing does definitely cost: it will NOT
+    # track a real lighting change after that first frame (room
+    # brightening/dimming later reads exactly as it would with this off,
+    # until the process restarts).
+    #
+    # clahe_clip_limit bounds how steeply the frozen LUT stretches the
+    # calibration frame — this is the mechanism actually verified to
+    # control noise amplification: a high limit amplifies noise on every
+    # frame it's applied to regardless of freezing (measured: unclipped
+    # stretching of a narrow, noisy, low-contrast frame reproduces the same
+    # ~45% false motion whether recomputed every frame or frozen — freezing
+    # alone, without a low clip limit, does not fix the reported bug). 2.0
+    # (OpenCV's typical CLAHE default) measured 0% false motion on a
+    # synthetic reproduction of the reported bug, both frozen and
+    # recomputed per frame at that same limit.
+    #
+    # Because calibration only ever happens once, ANY low-dynamic-range or
+    # otherwise unrepresentative first frame — not just "dim and noisy":
+    # glare, mid-AE-convergence, a single hot pixel/IR reflection producing
+    # a sharply-stepped LUT around one value — degrades detection silently
+    # for the rest of the run (see process_frame's raw_range check, which
+    # logs a WARNING for this instead of the identity-fallback guard in
+    # _build_luminosity_lut, which is unreachable at any clahe_clip_limit
+    # this field allows).
+    #
+    # Off by default: changes detection sensitivity, so enabling it may
+    # need threshold/motion_threshold_percent re-tuning.
+    equalize_luminosity: bool = Field(
+        default=False,
+        description="Normalize brightness via a LUT calibrated once from the first frame and frozen thereafter",
+    )
+    clahe_clip_limit: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=40.0,
+        description="Bounds how steeply the frozen luminosity LUT stretches brightness (only used when "
+        "equalize_luminosity is True) — higher amplifies sensor noise more on every frame",
+    )
+
     @field_validator("blur_size")
     @classmethod
     def blur_size_must_be_odd(cls, v: int) -> int:
@@ -182,7 +261,7 @@ class NotifierType(str, enum.Enum):
 
 
 class WatchdogConfig(StrictModel):
-    """Viewer connectivity watchdog — alerts when stream consumers drop to zero."""
+    """Stream watchdog — alerts when viewers drop to zero or the video freezes."""
 
     enabled: bool = Field(default=False)
     go2rtc_api_url: str = Field(default="http://go2rtc:1984")
@@ -194,6 +273,13 @@ class WatchdogConfig(StrictModel):
     ntfy_url: str = Field(default="")
     webhook_url: str = Field(default="")
     alert_message: str = Field(default="bbwatch: viewer disconnected from stream")
+    # Video counts as frozen when the stream's video byte counter has not
+    # advanced for this long while viewers are connected.
+    video_stall_s: float = Field(default=20.0, ge=5.0, le=600.0)
+    video_stall_message: str = Field(
+        default="bbwatch: live video is FROZEN - restart go2rtc (make restart)"
+    )
+    video_recovered_message: str = Field(default="bbwatch: live video is flowing again")
 
 
 class BBWatchConfig(BaseSettings):

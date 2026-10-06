@@ -18,6 +18,7 @@ bbwatch is a **baby monitor**. A silent failure means parents believe they are m
 ## Security Posture: Local-Only
 
 - bbwatch is local-network only. Never add code that sends audio, video, or images to third-party services. Push notifications (ntfy) carry text only — no media.
+- **Remote upload — the one deliberate exception.** The owner explicitly opted in to uploading alert clips and screenshots to their own Google Drive. This lives *outside* the bbwatch process, as the host-side `deploy/bbwatch-upload.{sh,service,timer}` (`rclone move`), and is off unless that timer is installed. Keep it that way: the bbwatch Python package itself must never upload media, and any new upload destination needs the same explicit owner opt-in.
 - Never commit secrets (ntfy auth tokens, go2rtc credentials) to `config.yaml` or anywhere in the repo; they belong in environment variables (`BBWATCH_` prefix).
 - New network listeners or exposed ports require explicit justification and must default to binding local/LAN interfaces only.
 - Validate all external input at the boundary (config values via Pydantic constraints, subprocess output via the parsing regexes in `hardware.py`).

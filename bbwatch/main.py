@@ -230,6 +230,8 @@ class BabyMonitor:
                 offset_y=self.config.motion.offset_y,
                 process_width=self.config.motion.process_width,
                 latency_report_interval_s=self.config.latency_report_interval_s,
+                equalize_luminosity=self.config.motion.equalize_luminosity,
+                clahe_clip_limit=self.config.motion.clahe_clip_limit,
             )
             # zoom/offset/process_width have no effect on the video anyone
             # watches — only on the ROI MotionDetector analyzes internally.
@@ -256,6 +258,7 @@ class BabyMonitor:
                 fps=self.config.alerts.overlay_fps,
                 history_len=self.config.motion.history_len,
                 latency_report_interval_s=self.config.latency_report_interval_s,
+                drop_stale_frames=self.config.alerts.overlay_drop_stale_frames,
             )
             self._overlay_generator.start()
         else:
@@ -337,6 +340,9 @@ class BabyMonitor:
                 LOGGER.error(f"Error stopping observer: {e}")
             self._observer = None
 
+        if self._alert_manager is not None:
+            self._alert_manager.shutdown()
+
         if self._storage is not None:
             try:
                 self._storage.stop()
@@ -369,22 +375,25 @@ class BabyMonitor:
                 if self._overlay_controller is not None:
                     self._overlay_controller.update()
 
+                # Motion feeds the alert state machine (and so clip recording)
+                # whether or not the dynamic overlay is enabled.
+                motion_level = 0.0
+                motion_detected = False
+                if self._motion_detector:
+                    motion_seq, motion_level = self._motion_detector.get_motion_sample()
+                    motion_detected = motion_level > self.config.motion.motion_threshold_percent
+                    if self._alert_manager:
+                        self._alert_manager.process_motion(motion_detected, sample_id=motion_seq)
+
                 # --- Update Dynamic Data ---
                 if self._overlay_generator and self._running:
-                    # Get motion level
-                    motion_level = 0.0
-                    motion_detected = False
-                    if self._motion_detector:
-                        motion_level = self._motion_detector.get_current_motion()
-                        motion_detected = motion_level > self.config.motion.motion_threshold_percent
-
-                    # Get audio level and alert status
+                    # Get audio level and cry status (audio only: motion has its own indicator)
                     audio_level = 0.0
                     audio_alert = False
                     latency_ms = None
                     if self._alert_manager:
                         audio_level = self._alert_manager.current_intensity
-                        audio_alert = self._alert_manager.alert_active
+                        audio_alert = self._alert_manager.audio_active
                         latency_ms = self._alert_manager.last_latency_ms
 
                     # Update overlay
@@ -408,6 +417,10 @@ class BabyMonitor:
                         )
                     if self._capture and not self._capture.is_running():
                         LOGGER.error("Audio capture UNHEALTHY: FFmpeg not running — cry detection is down")
+                    if self._watchdog and self._watchdog.video_stalled:
+                        LOGGER.error("Live video UNHEALTHY: stream frozen — restart go2rtc (make restart)")
+                    if self._alert_manager and (rec_err := self._alert_manager.recording_error):
+                        LOGGER.error(f"Clip recording UNHEALTHY: last clip failed — {rec_err}")
 
                 time.sleep(0.05)  # 20Hz — responsive overlay state updates
 

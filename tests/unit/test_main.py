@@ -302,7 +302,7 @@ def test_run_loop(monitor, mock_components):
     monitor.config.fake_hardware = True
 
     # Configure mock motion detector return
-    mock_components["motion"].return_value.get_current_motion.return_value = 0.0
+    mock_components["motion"].return_value.get_motion_sample.return_value = (0, 0.0)
     mock_components["storage"].return_value.get_usage.return_value = (100, 1000)
 
     with patch("time.sleep") as mock_sleep:
@@ -341,7 +341,7 @@ class TestHealthCheck:
 
     def test_logs_error_when_motion_detector_unhealthy(self, monitor, mock_components, log_capture):
         monitor.config.fake_hardware = True
-        mock_components["motion"].return_value.get_current_motion.return_value = 0.0
+        mock_components["motion"].return_value.get_motion_sample.return_value = (0, 0.0)
         mock_components["motion"].return_value.is_healthy.return_value = False
         mock_components["motion"].return_value.last_frame_age_s.return_value = 42.0
 
@@ -356,7 +356,7 @@ class TestHealthCheck:
 
     def test_logs_error_when_audio_capture_not_running(self, monitor, mock_components, log_capture):
         monitor.config.fake_hardware = True
-        mock_components["motion"].return_value.get_current_motion.return_value = 0.0
+        mock_components["motion"].return_value.get_motion_sample.return_value = (0, 0.0)
         mock_components["motion"].return_value.is_healthy.return_value = True
         mock_components["capture"].return_value.is_running.return_value = False
 
@@ -369,9 +369,10 @@ class TestHealthCheck:
 
     def test_no_health_error_when_all_components_healthy(self, monitor, mock_components, log_capture):
         monitor.config.fake_hardware = True
-        mock_components["motion"].return_value.get_current_motion.return_value = 0.0
+        mock_components["motion"].return_value.get_motion_sample.return_value = (0, 0.0)
         mock_components["motion"].return_value.is_healthy.return_value = True
         mock_components["capture"].return_value.is_running.return_value = True
+        mock_components["alert"].return_value.recording_error = None
 
         with patch("bbwatch.main.time.time", side_effect=_health_check_time_sequence()):
             with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
@@ -379,3 +380,56 @@ class TestHealthCheck:
 
         messages = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
         assert not any("UNHEALTHY" in m for m in messages)
+
+    def test_logs_error_when_clip_recording_failed(self, monitor, mock_components, log_capture):
+        """Failure path: a failed ffmpeg clip must keep being reported, not just logged once."""
+        monitor.config.fake_hardware = True
+        mock_components["motion"].return_value.get_motion_sample.return_value = (0, 0.0)
+        mock_components["motion"].return_value.is_healthy.return_value = True
+        mock_components["capture"].return_value.is_running.return_value = True
+        mock_components["alert"].return_value.recording_error = "ffmpeg exit 1: connection refused"
+
+        with patch("bbwatch.main.time.time", side_effect=_health_check_time_sequence()):
+            with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
+                monitor.run()
+
+        messages = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
+        assert any("Clip recording UNHEALTHY" in m and "connection refused" in m for m in messages)
+
+    def test_stop_finalizes_in_progress_clip(self, monitor, mock_components):
+        monitor.config.fake_hardware = True
+        mock_components["motion"].return_value.get_motion_sample.return_value = (0, 0.0)
+
+        with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
+            monitor.run()
+
+        mock_components["alert"].return_value.shutdown.assert_called_once()
+
+    def test_motion_frames_feed_alert_manager_with_sample_id(self, monitor, mock_components):
+        """Motion must reach the alert state machine (it starts recordings), tagged with its frame id."""
+        monitor.config.fake_hardware = True
+        monitor.config.motion.motion_threshold_percent = 1.0
+        mock_components["motion"].return_value.get_motion_sample.return_value = (42, 2.5)
+
+        with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
+            monitor.run()
+
+        mock_components["alert"].return_value.process_motion.assert_called_with(True, sample_id=42)
+
+    def test_logs_error_when_live_video_stalled(self, monitor, mock_components, log_capture):
+        """Failure path: a frozen babycam video must be reported every health check."""
+        monitor.config.fake_hardware = True
+        monitor.config.watchdog.enabled = True
+        mock_components["motion"].return_value.get_motion_sample.return_value = (0, 0.0)
+        mock_components["motion"].return_value.is_healthy.return_value = True
+        mock_components["capture"].return_value.is_running.return_value = True
+        mock_components["alert"].return_value.recording_error = None
+
+        with patch("bbwatch.main.StreamWatchdog") as wd, patch("bbwatch.main.make_notifier"):
+            wd.return_value.video_stalled = True
+            with patch("bbwatch.main.time.time", side_effect=_health_check_time_sequence()):
+                with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
+                    monitor.run()
+
+        messages = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
+        assert any("Live video UNHEALTHY" in m for m in messages)

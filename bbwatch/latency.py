@@ -46,24 +46,39 @@ class LatencyTracker:
     from a single thread.
     """
 
-    def __init__(self, pipeline: str, report_interval_s: float = 10.0) -> None:
+    def __init__(self, pipeline: str, report_interval_s: float = 10.0, track_drops: bool = False) -> None:
         """Initialize tracker.
 
         Args:
             pipeline: Name used in log lines (e.g. "audio", "motion").
             report_interval_s: Seconds between aggregated INFO summaries.
+            track_drops: When True, `record(dropped=...)` calls accumulate a
+                drop count/rate that's appended to the summary line. Kept
+                opt-in so pipelines that never drop a pass (audio, motion)
+                don't grow an always-zero "dropped=0/n" segment in their logs.
         """
         self.pipeline = pipeline
         self.report_interval_s = report_interval_s
+        self.track_drops = track_drops
         self._window: dict[str, list[float]] = {}
         self._count = 0
+        self._dropped = 0
         self._last_report = time.time()
 
-    def record(self, timer: StageTimer) -> None:
-        """Add one pass's stage timings; emit logs as configured."""
+    def record(self, timer: StageTimer, dropped: bool = False) -> None:
+        """Add one pass's stage timings; emit logs as configured.
+
+        Args:
+            timer: The pass's completed StageTimer.
+            dropped: Whether this pass's output was discarded rather than
+                delivered (e.g. an overlay frame skipped because the pipe
+                wasn't ready). Ignored unless `track_drops` is set.
+        """
         for stage, ms in timer.stages.items():
             self._window.setdefault(stage, []).append(ms)
         self._count += 1
+        if self.track_drops and dropped:
+            self._dropped += 1
 
         if LOGGER.isEnabledFor(logging.DEBUG):
             detail = " ".join(f"{k}={v:.1f}ms" for k, v in timer.stages.items())
@@ -81,7 +96,14 @@ class LatencyTracker:
             avg = sum(values) / len(values)
             parts.append(f"{stage}=avg {avg:.1f}/max {max(values):.1f}ms")
 
+        if self.track_drops:
+            # _window is non-empty here (guarded above), and record() always
+            # increments _count before populating _window, so _count >= 1.
+            pct = self._dropped / self._count * 100
+            parts.append(f"dropped={self._dropped}/{self._count} ({pct:.1f}%)")
+
         LOGGER.info(f"LATENCY {self.pipeline} n={self._count} " + " | ".join(parts))
         self._window.clear()
         self._count = 0
+        self._dropped = 0
         self._last_report = now
