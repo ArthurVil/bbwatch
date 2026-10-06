@@ -58,9 +58,11 @@ USER bbwatch
 # Create data directories
 RUN mkdir -p /app/wav_segments /app/overlays
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import json; s=json.load(open('/app/status.json')); exit(0 if s.get('system_status')=='ok' else 1)" || exit 1
+# Health check: status.json lives in the data dir (BBWATCH_DATA_DIR), and the
+# main loop heartbeats it every second, so a stale timestamp means the
+# process is wedged even if the last status written was "ok".
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import json, os, time; s=json.load(open(os.path.join(os.environ.get('BBWATCH_DATA_DIR', '/app/data'), 'status.json'))); exit(0 if s.get('system_status')=='ok' and time.time()-s['timestamp']<30 else 1)" || exit 1
 
 # Entry point
 CMD ["python", "-m", "bbwatch.main"]
