@@ -92,13 +92,14 @@ host:
 # Alerts when all viewers disconnect from the go2rtc stream.
 # Credentials must match GO2RTC_USERNAME / GO2RTC_PASSWORD in docker/.env.
 #
-# watchdog:
+# watchdog:                    # enabled on the Pi via docker-compose.yml
 #   enabled: false
 #   go2rtc_api_url: "http://go2rtc:1984"
 #   go2rtc_username: ""        # or set via BBWATCH_WATCHDOG__GO2RTC_USERNAME
 #   go2rtc_password: ""        # or set via BBWATCH_WATCHDOG__GO2RTC_PASSWORD
 #   stream_name: babycam
 #   poll_interval_s: 10.0
+#   video_stall_s: 20.0        # alert when watched video stops advancing this long
 #   notifier: none             # ntfy | webhook | none
 #   ntfy_url: ""               # e.g. https://ntfy.sh/my-topic
 #   webhook_url: ""            # e.g. http://homeassistant.local:8123/api/webhook/xyz

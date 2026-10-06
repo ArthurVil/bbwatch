@@ -235,6 +235,13 @@ mic-shaped RTSP audio stream that no longer carries audio.
   compose -f docker/docker-compose.yml logs --tail=20 bbwatch | grep
   LATENCY.*overlay` — a `dropped=` percentage stuck near 100% across
   several consecutive lines is the signature.
+- Detected automatically: the stream watchdog (enabled in
+  `docker-compose.yml`) watches babycam's video byte counter in the go2rtc
+  API. If it stops advancing for `watchdog.video_stall_s` (20 s) while a
+  viewer is connected, bbwatch logs `VIDEO STALLED` once, then
+  `Live video UNHEALTHY` every 10 s, and sends `video_stall_message`
+  through the configured notifier (ntfy/webhook). It also breaks alert
+  clips (`dimensions not set` in the recording error).
 
 **Port already in use**
 - `ss -tlnp | grep -E '8554|1984'` shows what's currently bound. A stray

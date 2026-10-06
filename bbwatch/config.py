@@ -261,7 +261,7 @@ class NotifierType(str, enum.Enum):
 
 
 class WatchdogConfig(StrictModel):
-    """Viewer connectivity watchdog — alerts when stream consumers drop to zero."""
+    """Stream watchdog — alerts when viewers drop to zero or the video freezes."""
 
     enabled: bool = Field(default=False)
     go2rtc_api_url: str = Field(default="http://go2rtc:1984")
@@ -273,6 +273,13 @@ class WatchdogConfig(StrictModel):
     ntfy_url: str = Field(default="")
     webhook_url: str = Field(default="")
     alert_message: str = Field(default="bbwatch: viewer disconnected from stream")
+    # Video counts as frozen when the stream's video byte counter has not
+    # advanced for this long while viewers are connected.
+    video_stall_s: float = Field(default=20.0, ge=5.0, le=600.0)
+    video_stall_message: str = Field(
+        default="bbwatch: live video is FROZEN - restart go2rtc (make restart)"
+    )
+    video_recovered_message: str = Field(default="bbwatch: live video is flowing again")
 
 
 class BBWatchConfig(BaseSettings):

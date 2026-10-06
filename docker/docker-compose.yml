@@ -111,6 +111,11 @@ services:
       # audio). Explicit so it follows RPI_HOST like the other streams instead
       # of AlertConfig's localhost default.
       - BBWATCH_ALERTS__STREAM_URL=rtsp://${RPI_HOST:-127.0.0.1}:8554/babycam
+      # Stream watchdog: reports viewer disconnects and a frozen babycam
+      # video (bbwatch restarted without go2rtc). go2rtc runs on the host,
+      # so its API is on RPI_HOST, not the image default http://go2rtc:1984.
+      - BBWATCH_WATCHDOG__ENABLED=true
+      - BBWATCH_WATCHDOG__GO2RTC_API_URL=http://${RPI_HOST:-127.0.0.1}:1984
       # Well under the 128MB tmpfs cap above (see comment) — max_size_mb's
       # 1024MB config.yaml default assumes SD/disk-backed storage where
       # headroom is cheap; on tmpfs it's RAM, so keep the working set small.

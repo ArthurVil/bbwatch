@@ -417,6 +417,8 @@ class BabyMonitor:
                         )
                     if self._capture and not self._capture.is_running():
                         LOGGER.error("Audio capture UNHEALTHY: FFmpeg not running — cry detection is down")
+                    if self._watchdog and self._watchdog.video_stalled:
+                        LOGGER.error("Live video UNHEALTHY: stream frozen — restart go2rtc (make restart)")
                     if self._alert_manager and (rec_err := self._alert_manager.recording_error):
                         LOGGER.error(f"Clip recording UNHEALTHY: last clip failed — {rec_err}")
 

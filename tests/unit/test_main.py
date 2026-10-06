@@ -415,3 +415,21 @@ class TestHealthCheck:
             monitor.run()
 
         mock_components["alert"].return_value.process_motion.assert_called_with(True, sample_id=42)
+
+    def test_logs_error_when_live_video_stalled(self, monitor, mock_components, log_capture):
+        """Failure path: a frozen babycam video must be reported every health check."""
+        monitor.config.fake_hardware = True
+        monitor.config.watchdog.enabled = True
+        mock_components["motion"].return_value.get_motion_sample.return_value = (0, 0.0)
+        mock_components["motion"].return_value.is_healthy.return_value = True
+        mock_components["capture"].return_value.is_running.return_value = True
+        mock_components["alert"].return_value.recording_error = None
+
+        with patch("bbwatch.main.StreamWatchdog") as wd, patch("bbwatch.main.make_notifier"):
+            wd.return_value.video_stalled = True
+            with patch("bbwatch.main.time.time", side_effect=_health_check_time_sequence()):
+                with patch("bbwatch.main.time.sleep", side_effect=KeyboardInterrupt):
+                    monitor.run()
+
+        messages = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
+        assert any("Live video UNHEALTHY" in m for m in messages)
