@@ -79,7 +79,49 @@ make up
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-## 5. Deployment Verification
+## 5. Alert Recordings & Google Drive Upload (optional)
+
+When an alert triggers (sustained cry **or** sustained motion), bbwatch records
+the `babycam` stream (video + overlay + mic audio) until the alert clears,
+capped at `alerts.record_max_s` (default 5 min) per file:
+
+```
+data/clips/YYYY-MM-DD/HHMMSS.mp4        # finished clips
+data/clips/YYYY-MM-DD/.HHMMSS.mp4.part  # clip being recorded (hidden)
+data/screenshots/YYYY-MM-DD/HHMMSS.jpg
+```
+
+Tune with `alerts.motion_triggers_alert`, `alerts.motion_min_s` and
+`alerts.record_max_s` in `config.yaml`.
+
+To view recordings from anywhere, a host-side systemd timer uploads finished
+files to Google Drive with `rclone move` every minute (local copies are deleted
+once uploaded; during a network outage they wait on the SD card and upload
+later). It is **opt-in** and runs outside the bbwatch container.
+
+1.  Configure an rclone remote named `gdrive` for the user that owns `~/bbwatch`
+    (`rclone config`, type `drive`), and check it: `rclone lsd gdrive:`.
+2.  Install and start the timer (edit `User=`/paths in the `.service` if your
+    user is not `kanai`):
+    ```bash
+    sudo cp deploy/bbwatch-upload.service deploy/bbwatch-upload.timer /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now bbwatch-upload.timer
+    ```
+3.  Check it:
+    ```bash
+    systemctl list-timers bbwatch-upload.timer
+    journalctl -u bbwatch-upload -n 50
+    rclone lsl gdrive:bbwatch/clips
+    ```
+
+Files land in `gdrive:bbwatch/clips/<date>/` and `gdrive:bbwatch/screenshots/<date>/`.
+Drive-side retention is not managed — delete old days from Drive yourself.
+
+Do not point bbwatch at an `rclone mount` instead: writing live recordings to a
+FUSE-mounted Drive loses footage whenever the network drops.
+
+## 6. Deployment Verification
 
 1.  **Check Logs**:
     ```bash

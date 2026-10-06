@@ -1,0 +1,16 @@
+[Unit]
+Description=Upload bbwatch clips and screenshots to Google Drive (rclone)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The user whose ~/.config/rclone/rclone.conf holds the gdrive: remote
+User=kanai
+Environment=BBWATCH_DATA_DIR=/home/kanai/bbwatch/data
+Environment=BBWATCH_UPLOAD_REMOTE=gdrive:bbwatch
+ExecStart=/home/kanai/bbwatch/deploy/bbwatch-upload.sh
+# A slow upload must not wedge the timer forever
+TimeoutStartSec=30min
+Nice=10
+IOSchedulingClass=idle

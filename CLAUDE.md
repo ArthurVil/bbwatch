@@ -47,8 +47,11 @@ USB Mic → FFmpeg/SlidingWindowCapture → WAV segments (disk)
                                               ↓
                                         Detector (DSP)
                                               ↓
-                                       AlertManager → FFmpegRecorder (clips + screenshots)
+                                       AlertManager ← MotionDetector (sustained motion)
                                               ↓
+                                       FFmpegRecorder (clips + screenshots, data/<kind>/YYYY-MM-DD/)
+                                              ↓  (host, opt-in: deploy/bbwatch-upload.timer)
+                                       rclone move → Google Drive
 USB Cam → go2rtc ← overlay pipe ← OverlayGenerator ← MotionDetector
                ↓
           WebRTC/RTSP → Browser / Phone
