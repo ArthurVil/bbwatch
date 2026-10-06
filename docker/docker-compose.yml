@@ -104,6 +104,10 @@ services:
       # video-only mode instead of retrying a dead audio stream forever.
       - BBWATCH_AUDIO__DEVICE_INDEX=${BBWATCH_AUDIO_SOURCE:-rtsp://${RPI_HOST:-127.0.0.1}:8554/babycam}
       - BBWATCH_MOTION__STREAM_URL=rtsp://${RPI_HOST:-127.0.0.1}:8554/raw_video
+      # Alert clips/screenshots: the composited stream (video + overlay + mic
+      # audio). Explicit so it follows RPI_HOST like the other streams instead
+      # of AlertConfig's localhost default.
+      - BBWATCH_ALERTS__STREAM_URL=rtsp://${RPI_HOST:-127.0.0.1}:8554/babycam
       # Well under the 128MB tmpfs cap above (see comment) — max_size_mb's
       # 1024MB config.yaml default assumes SD/disk-backed storage where
       # headroom is cheap; on tmpfs it's RAM, so keep the working set small.
