@@ -25,6 +25,11 @@ storage:
 alerts:
   status_file: status.json
   overlay_dir: overlays
+  # Cry alert hysteresis on the 250-2000 Hz RMS of the babycam audio, which
+  # go2rtc boosts by +10 dB. Quiet room: ~0.0025. On at trigger_high, off
+  # below trigger_low.
+  trigger_high: 0.02
+  trigger_low: 0.01
   cooldown_s: 1.0
   # What an alert does besides showing on the overlay. Read at startup:
   # edit, then `make restart`.

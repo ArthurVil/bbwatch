@@ -90,6 +90,12 @@ streams:
   #   is full range (yuvj420p) and a bare -pix_fmt keeps that range flag.
   # - -g 10: a keyframe every 1 s, so playback starts and recovers from a lost
   #   packet within 1 s.
+  # - [1:a]volume=10dB,alimiter: the mic's hardware gain is already at max
+  #   (Mic Capture Volume 256/256) and a crying baby barely reached the alert
+  #   threshold. Boosted here, BEFORE the 8-bit mu-law encode, so quiet sounds
+  #   keep their resolution; the limiter stops loud cries from clipping. This
+  #   also raises what bbwatch's cry detection hears (it reads this stream):
+  #   alerts.trigger_high/low in config.yaml are set for this gain.
   #
   # -fps_mode cfr -r 10: this ffmpeg process runs for as long as go2rtc
   # keeps it alive (hours, across many viewers) doing 1080p decode + overlay
@@ -147,7 +153,7 @@ streams:
       -fflags nobuffer -flags low_delay -rtsp_transport tcp -timeout 5000000 -i rtsp://127.0.0.1:8554/device_video \
       -f alsa -i plughw:CARD=Camera,DEV=0 \
       -f rawvideo -pixel_format rgba -video_size 1280x720 -framerate 10 -i /home/kanai/bbwatch/data/overlays/overlay.pipe \
-      -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=1,scale=out_range=tv,format=yuv420p' \
+      -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=1,scale=out_range=tv,format=yuv420p;[1:a]volume=10dB,alimiter=limit=0.9:level=0' \
       -fps_mode cfr -r 10 -c:v libx264 -preset ultrafast -tune zerolatency \
       -crf 28 -maxrate 1500k -bufsize 1500k -g 10 \
       -c:a pcm_mulaw -ar 8000 -ac 1 \
