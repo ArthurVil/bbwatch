@@ -78,6 +78,27 @@ class StorageConfig(StrictModel):
     cleanup_interval_s: float = Field(default=60.0, ge=10.0)
 
 
+class AlertDestination(str, enum.Enum):
+    """Where alert screenshots and clips are written."""
+
+    LOCAL = "local"  # data/clips, data/screenshots — kept on the SD card
+    CLOUD = "cloud"  # data/outbox — moved to Drive by the host upload timer
+    BOTH = "both"  # local, plus a hard link in data/outbox for upload
+
+
+class AlertActionsConfig(StrictModel):
+    """What happens when an alert triggers, chosen once at startup.
+
+    The live overlay always shows the alert; these are the extra side effects.
+    The bbwatch process never uploads anything itself: "cloud" only places
+    files in the outbox, which the opt-in host timer (deploy/) empties.
+    """
+
+    screenshot: bool = Field(default=False)  # one JPEG when the alert triggers
+    clip: bool = Field(default=False)  # record until the alert clears
+    destination: AlertDestination = Field(default=AlertDestination.LOCAL)
+
+
 class AlertConfig(StrictModel):
     """Alert configuration."""
 
@@ -109,7 +130,7 @@ class AlertConfig(StrictModel):
     # alert clears sooner: ffmpeg needs 1-2 s just to connect, so a short
     # sound spike would otherwise leave a header-only clip.
     record_min_s: float = Field(default=15.0, ge=0.0, le=300.0)
-    screenshot_on_peak: bool = Field(default=True)
+    actions: AlertActionsConfig = Field(default_factory=AlertActionsConfig)
     health_timeout_s: float = Field(default=10.0, ge=1.0)
 
     # Video stream for recording/screenshots (RTSP URL)
@@ -118,6 +139,8 @@ class AlertConfig(StrictModel):
     # Output directories
     clips_dir: Path = Field(default=Path("clips"))
     screenshots_dir: Path = Field(default=Path("screenshots"))
+    # Files for the host upload timer: outbox/clips, outbox/screenshots
+    outbox_dir: Path = Field(default=Path("outbox"))
 
     # Dynamic Overlay
     enable_dynamic_overlay: bool = Field(default=True)
@@ -395,6 +418,9 @@ class BBWatchConfig(BaseSettings):
                         "screenshots_dir": base / self.alerts.screenshots_dir
                         if not self.alerts.screenshots_dir.is_absolute()
                         else self.alerts.screenshots_dir,
+                        "outbox_dir": base / self.alerts.outbox_dir
+                        if not self.alerts.outbox_dir.is_absolute()
+                        else self.alerts.outbox_dir,
                     }
                 ),
             }
@@ -405,8 +431,6 @@ class BBWatchConfig(BaseSettings):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.storage.wav_dir.mkdir(parents=True, exist_ok=True)
         self.alerts.overlay_dir.mkdir(parents=True, exist_ok=True)
-        self.alerts.clips_dir.mkdir(parents=True, exist_ok=True)
-        self.alerts.screenshots_dir.mkdir(parents=True, exist_ok=True)
         LOGGER.debug(f"Ensured directories exist under {self.data_dir}")
 
 

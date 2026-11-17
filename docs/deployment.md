@@ -79,17 +79,39 @@ make up
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-## 5. Alert Recordings & Google Drive Upload (optional)
+## 5. Alert Actions, Recordings & Google Drive Upload (optional)
 
-When an alert triggers (cry **or** motion), bbwatch records
-the `babycam` stream (video + overlay + mic audio) until the alert clears,
-capped at `alerts.record_max_s` (default 5 min) per file and lasting at least
-`alerts.record_min_s` (default 15 s). Motion counts once `alerts.motion_min_frames`
-frames (default 3) within `alerts.motion_window_s` (1 s) change more than
-`motion.motion_threshold_percent` (1 %) of the image:
+An alert triggers on a cry **or** on motion: `alerts.motion_min_frames` frames
+(default 3) within `alerts.motion_window_s` (1 s) changing more than
+`motion.motion_threshold_percent` (1 %) of the image. The live overlay always
+shows it. What else happens is chosen at startup in `config.yaml`:
+
+```yaml
+alerts:
+  actions:
+    screenshot: false     # one JPEG when an alert triggers
+    clip: false           # record the babycam stream until the alert clears
+    destination: local    # local | cloud | both
+```
+
+The default (both off) is overlay only: no files, FFmpeg never runs. Apply a
+change with `make restart`. Env vars override for one run, e.g.
+`BBWATCH_ALERTS__ACTIONS__CLIP=true` (add it to the `environment:` list in
+`docker/docker-compose.yml`). The startup log shows the result:
+`Alert actions: overlay only (no screenshots, no clips)`.
+
+A clip (video + overlay + mic audio) runs until the alert clears, capped at
+`alerts.record_max_s` (default 5 min) per file and lasting at least
+`alerts.record_min_s` (default 15 s).
+
+| destination | where files go |
+|---|---|
+| `local` | `data/clips/`, `data/screenshots/` — kept on the SD card (no automatic cleanup) |
+| `cloud` | `data/outbox/{clips,screenshots}/` — moved to Drive by the upload timer, then deleted locally |
+| `both`  | local, plus a hard link in `data/outbox/` (no extra space) for the upload timer |
 
 ```
-data/clips/YYYY-MM-DD/HHMMSS.mp4        # finished clips
+data/clips/YYYY-MM-DD/HHMMSS.mp4        # finished clips (outbox/clips/... for cloud)
 data/clips/YYYY-MM-DD/.HHMMSS.mp4.part  # clip being recorded (hidden)
 data/screenshots/YYYY-MM-DD/HHMMSS.jpg
 ```
@@ -98,10 +120,10 @@ Tune with `motion.motion_threshold_percent`, `alerts.motion_min_frames`,
 `alerts.motion_window_s`, `alerts.record_min_s` and
 `alerts.record_max_s` in `config.yaml`.
 
-To view recordings from anywhere, a host-side systemd timer uploads finished
-files to Google Drive with `rclone move` every minute (local copies are deleted
-once uploaded; during a network outage they wait on the SD card and upload
-later). It is **opt-in** and runs outside the bbwatch container.
+For `cloud`/`both`, a host-side systemd timer empties `data/outbox/` to Google
+Drive with `rclone move` every minute (during a network outage files wait on
+the SD card and upload later). It is **opt-in** and runs outside the bbwatch
+container; with `destination: local` it finds nothing to upload.
 
 1.  Configure an rclone remote named `gdrive` for the user that owns `~/bbwatch`
     (`rclone config`, type `drive`), and check it: `rclone lsd gdrive:`.

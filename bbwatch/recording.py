@@ -5,8 +5,8 @@ FFmpegRecorder implementation that reads from an RTSP stream.
 
 Clips are written to a hidden ``.<name>.part`` file next to their final
 path and renamed into place only once FFmpeg exits, so anything consuming
-the clips directory (e.g. the Google Drive uploader in ``deploy/``) never
-sees a half-written file. The container is fragmented MP4, so even a
+the clips directory (e.g. the Google Drive uploader in ``deploy/``, which
+empties data/outbox) never sees a half-written file. The container is fragmented MP4, so even a
 ``.part`` left behind by a crash is playable; ``recover_partial_clips``
 promotes those on startup.
 """
@@ -15,10 +15,14 @@ import logging
 import signal
 import subprocess
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
 LOGGER = logging.getLogger(__name__)
+
+# Called with the final path once a clip is complete and renamed into place.
+OnSaved = Callable[[Path], None]
 
 PART_SUFFIX = ".part"
 
@@ -103,8 +107,13 @@ class Recorder(Protocol):
         """
         ...
 
-    def start_recording(self, output_path: Path, max_duration_s: float) -> None:
+    def start_recording(self, output_path: Path, max_duration_s: float, on_saved: OnSaved | None = None) -> None:
         """Start a background clip recording.
+
+        Args:
+            output_path: Final clip path (written to a hidden .part first).
+            max_duration_s: FFmpeg stops on its own after this long.
+            on_saved: Called with the final path once the clip is complete.
 
         Raises:
             RuntimeError: Already recording.
@@ -128,9 +137,10 @@ class Recorder(Protocol):
 class _Recording:
     """One FFmpeg clip process plus the reaper thread that finalizes it."""
 
-    def __init__(self, process: subprocess.Popen[bytes], part_path: Path) -> None:
+    def __init__(self, process: subprocess.Popen[bytes], part_path: Path, on_saved: OnSaved | None = None) -> None:
         self.process = process
         self.part_path = part_path
+        self.on_saved = on_saved
         self.stop_requested = False
 
 
@@ -188,7 +198,7 @@ class FFmpegRecorder:
             str(part_path),
         ]
 
-    def start_recording(self, output_path: Path, max_duration_s: float) -> None:
+    def start_recording(self, output_path: Path, max_duration_s: float, on_saved: OnSaved | None = None) -> None:
         with self._lock:
             if self._current is not None and self._current.process.poll() is None:
                 raise RuntimeError("Already recording")
@@ -201,7 +211,7 @@ class FFmpegRecorder:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
-            recording = _Recording(process, part_path)
+            recording = _Recording(process, part_path, on_saved)
             self._current = recording
 
         threading.Thread(
@@ -241,6 +251,13 @@ class FFmpegRecorder:
         else:
             self._last_error = None
             LOGGER.info(f"Clip saved: {final}")
+
+        # A failed run can still leave a usable partial clip: hand it on too.
+        if final is not None and recording.on_saved is not None:
+            try:
+                recording.on_saved(final)
+            except Exception as e:  # reaper must never die silently
+                LOGGER.error(f"Post-save action failed for {final.name}: {type(e).__name__}: {e}")
 
     def is_recording(self) -> bool:
         with self._lock:
@@ -282,14 +299,18 @@ class MockRecorder:
         self.start_recording_calls: list[tuple[Path, float]] = []
         self.stop_recording_calls: int = 0
         self.error: str | None = None
+        self._output: Path | None = None
+        self._on_saved: OnSaved | None = None
 
     def capture_frame(self, output_path: Path) -> None:
         self.capture_frame_calls.append(output_path)
 
-    def start_recording(self, output_path: Path, max_duration_s: float) -> None:
+    def start_recording(self, output_path: Path, max_duration_s: float, on_saved: OnSaved | None = None) -> None:
         if self._recording:
             raise RuntimeError("Already recording")
         self._recording = True
+        self._output = output_path
+        self._on_saved = on_saved
         self.start_recording_calls.append((output_path, max_duration_s))
 
     def is_recording(self) -> bool:
@@ -297,11 +318,17 @@ class MockRecorder:
 
     def finish(self) -> None:
         """Simulate the clip reaching its duration cap and FFmpeg exiting on its own."""
-        self._recording = False
+        self._saved()
 
     def stop_recording(self) -> None:
-        self._recording = False
         self.stop_recording_calls += 1
+        self._saved()
+
+    def _saved(self) -> None:
+        """End the current clip, calling on_saved like FFmpegRecorder's reaper does."""
+        was_recording, self._recording = self._recording, False
+        if was_recording and self._output is not None and self._on_saved is not None:
+            self._on_saved(self._output)
 
     def last_error(self) -> str | None:
         return self.error

@@ -1,40 +1,23 @@
-"""Alert system with hysteresis logic and action handling.
+"""Alert state machine with hysteresis.
 
-Manages the alert state machine to prevent rapid oscillations (hysteresis),
-writes status for the overlay, and handles side effects like recording clips.
+Decides when an alert is on and writes status.json for the overlay. What an
+alert *does* besides showing on the overlay (screenshots, clips, where they
+go) is the job of ``bbwatch.actions.AlertActions``, configured at startup.
 """
 
 import enum
 import json
 import logging
-import subprocess
 import threading
 import time
 from collections import deque
 from dataclasses import asdict, dataclass
-from datetime import datetime
-from pathlib import Path
 
+from bbwatch.actions import AlertActions
 from bbwatch.config import AlertConfig
-from bbwatch.recording import FFmpegRecorder, Recorder, recover_partial_clips
+from bbwatch.recording import Recorder
 
 LOGGER = logging.getLogger(__name__)
-
-# Minimum gap between clip start attempts. Rollover is re-checked on every
-# state update (~20 Hz from motion); without this a dead stream, where
-# ffmpeg exits immediately, would respawn it on every call.
-RECORD_RETRY_S = 5.0
-
-
-def _dated_path(base_dir: Path, suffix: str) -> Path:
-    """Output path grouped by day: ``base_dir/YYYY-MM-DD/HHMMSS<suffix>``.
-
-    Day folders keep the clips/screenshots browsable once uploaded.
-    """
-    now = datetime.now()
-    day_dir = base_dir / now.strftime("%Y-%m-%d")
-    day_dir.mkdir(parents=True, exist_ok=True)
-    return day_dir / f"{now.strftime('%H%M%S')}{suffix}"
 
 
 class AlertState(str, enum.Enum):
@@ -69,15 +52,17 @@ class AlertManager:
       (main loop thread)
 
     The alert is active while either input is hot; it enters cooldown when
-    both are quiet and returns to idle after ``cooldown_s``.
+    both are quiet and returns to idle after ``cooldown_s``. Transitions are
+    passed to an ``AlertActions`` for the configured side effects.
     """
 
-    def __init__(self, config: AlertConfig, recorder: Recorder | None = None):
+    def __init__(self, config: AlertConfig, recorder: Recorder | None = None, actions: AlertActions | None = None):
         """Initialize alert manager.
 
         Args:
             config: Alert configuration.
-            recorder: Video recorder; defaults to FFmpegRecorder using config.stream_url.
+            recorder: Video recorder for the default AlertActions (tests inject a mock).
+            actions: Alert side effects; defaults to AlertActions(config.actions).
         """
         self.config = config
         self._state = AlertState.IDLE
@@ -89,11 +74,7 @@ class AlertManager:
         self._motion_hot = False
         self._motion_frame_times: deque[float] = deque()
         self._last_motion_sample: int | None = None
-        self._last_record_attempt = float("-inf")
-        self._clip_started_at = float("-inf")
-        # Set when the alert clears before record_min_s: stop the clip then
-        self._stop_due_at: float | None = None
-        self._recorder: Recorder = recorder if recorder is not None else FFmpegRecorder(config.stream_url)
+        self._actions = actions if actions is not None else AlertActions(config, recorder)
         # Serializes state-machine updates: audio arrives on the watchdog
         # observer thread, motion on the main loop thread.
         self._state_lock = threading.RLock()
@@ -102,11 +83,6 @@ class AlertManager:
         # the same fixed temp-file path — without a lock, concurrent writes
         # could interleave or race the rename.
         self._status_lock = threading.Lock()
-
-        # Pre-create output directories
-        self.config.screenshots_dir.mkdir(parents=True, exist_ok=True)
-        self.config.clips_dir.mkdir(parents=True, exist_ok=True)
-        recover_partial_clips(self.config.clips_dir)
 
     @property
     def current_intensity(self) -> float:
@@ -143,12 +119,12 @@ class AlertManager:
     @property
     def recording_error(self) -> str | None:
         """Last clip recording failure, None if the most recent clip succeeded."""
-        return self._recorder.last_error()
+        return self._actions.recording_error
 
     def shutdown(self) -> None:
         """Finalize any in-progress clip (called on monitor stop)."""
-        self._stop_due_at = None
-        self._recorder.stop_recording()
+        with self._state_lock:
+            self._actions.shutdown()
 
     @property
     def last_latency_ms(self) -> float | None:
@@ -255,10 +231,7 @@ class AlertManager:
         before = self._state
         active = self.trigger_source is not None
 
-        if self._stop_due_at is not None and now >= self._stop_due_at:
-            self._stop_due_at = None
-            LOGGER.info("Minimum clip length reached - stopping recording")
-            self._recorder.stop_recording()
+        self._actions.tick(now)
 
         if self._state == AlertState.IDLE:
             if active:
@@ -270,8 +243,8 @@ class AlertManager:
             else:
                 # Still triggered, update timestamp (keep alive)
                 self._last_trigger_time = now
-                # Clip hit record_max_s (or failed) while the alert goes on: roll over
-                self._ensure_recording(now)
+                # e.g. a clip that hit record_max_s rolls over
+                self._actions.on_active(now)
 
         elif self._state == AlertState.COOLDOWN:
             if active:
@@ -315,29 +288,8 @@ class AlertManager:
 
     def _handle_trigger(self, now: float) -> None:
         """Called when alert is triggered."""
-        LOGGER.info(f"🚨 ALERT TRIGGERED (source={self.trigger_source}) - Starting recording/screenshot")
-
-        if self.config.screenshot_on_peak:
-            threading.Thread(target=self._take_screenshot, daemon=True).start()
-
-        # Re-triggered before a short clip's minimum length ran out: keep it going
-        self._stop_due_at = None
-        self._ensure_recording(now)
-
-    def _ensure_recording(self, now: float) -> None:
-        """Start a clip unless one is running or the last attempt was too recent."""
-        if self._recorder.is_recording() or now - self._last_record_attempt < RECORD_RETRY_S:
-            return
-        self._last_record_attempt = now
-        output_path = _dated_path(self.config.clips_dir, ".mp4")
-        try:
-            self._recorder.start_recording(output_path, self.config.record_max_s)
-            self._clip_started_at = now
-            LOGGER.info(f"Recording started: {output_path.parent.name}/{output_path.name}")
-        except RuntimeError:
-            LOGGER.warning("Recording already in progress")
-        except FileNotFoundError as e:
-            LOGGER.error(f"Recording failed (ffmpeg not found): {e}")
+        LOGGER.info(f"🚨 ALERT TRIGGERED (source={self.trigger_source})")
+        self._actions.on_trigger(now)
 
     def _handle_cooldown(self) -> None:
         """Called when alert enters cooldown (all inputs quiet)."""
@@ -345,18 +297,5 @@ class AlertManager:
 
     def _handle_idle(self, now: float) -> None:
         """Called when alert clears completely."""
-        stop_at = self._clip_started_at + self.config.record_min_s
-        if self._recorder.is_recording() and now < stop_at:
-            LOGGER.info(f"Alert cleared - recording continues {stop_at - now:.0f} s more (record_min_s)")
-            self._stop_due_at = stop_at
-            return
-        LOGGER.info("Alert cleared - stopping recording")
-        self._recorder.stop_recording()
-
-    def _take_screenshot(self) -> None:
-        output_path = _dated_path(self.config.screenshots_dir, ".jpg")
-        try:
-            self._recorder.capture_frame(output_path)
-            LOGGER.info(f"Screenshot saved: {output_path.name}")
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
-            LOGGER.error(f"Screenshot failed: {type(e).__name__}: {e}")
+        LOGGER.info("Alert cleared")
+        self._actions.on_clear(now)

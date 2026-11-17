@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Upload finished bbwatch clips and screenshots to Google Drive via rclone,
-# deleting each local copy once it is safely uploaded.
+# Upload the bbwatch outbox (data/outbox/{clips,screenshots}) to Google Drive
+# via rclone, deleting each outbox file once it is safely uploaded.
+#
+# bbwatch only puts files in the outbox when alerts.actions.destination is
+# "cloud" or "both" in config.yaml (with "both" they are hard links, so the
+# local copies in data/clips and data/screenshots stay). With "local", or with
+# no screenshot/clip action, the outbox stays empty and this does nothing.
 #
 # Runs on the host (not in the bbwatch container) from bbwatch-upload.timer.
 # Opt-in: see "Remote upload" in .claude/rules/reliability.md.
 #
-#   BBWATCH_DATA_DIR       data dir holding clips/ and screenshots/ (default ~/bbwatch/data)
+#   BBWATCH_DATA_DIR       bbwatch data dir holding outbox/ (default ~/bbwatch/data)
 #   BBWATCH_UPLOAD_REMOTE  rclone destination (default gdrive:bbwatch)
 set -uo pipefail
 
@@ -14,7 +19,7 @@ REMOTE="${BBWATCH_UPLOAD_REMOTE:-gdrive:bbwatch}"
 status=0
 
 for kind in clips screenshots; do
-    src="$DATA_DIR/$kind"
+    src="$DATA_DIR/outbox/$kind"
     [ -d "$src" ] || continue
 
     # In-progress clips are hidden ".HHMMSS.mp4.part" files: never upload them.

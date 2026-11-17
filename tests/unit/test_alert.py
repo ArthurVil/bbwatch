@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from bbwatch.alert import AlertManager, AlertState
-from bbwatch.config import AlertConfig
+from bbwatch.config import AlertActionsConfig, AlertConfig
 from bbwatch.recording import MockRecorder
 
 
@@ -21,6 +21,10 @@ class TestAlertManager:
         """Test alert configuration."""
         return AlertConfig(
             status_file=tmp_path / "status.json",
+            clips_dir=tmp_path / "clips",
+            screenshots_dir=tmp_path / "screenshots",
+            outbox_dir=tmp_path / "outbox",
+            actions=AlertActionsConfig(clip=True),
             trigger_high=0.1,
             trigger_low=0.05,
             cooldown_s=1.0,  # Short cooldown for testing
@@ -189,8 +193,8 @@ class TestAlertManager:
         assert len(recorder.start_recording_calls) == 1
 
     def test_screenshot_taken_when_configured(self, config, tmp_path):
-        """Screenshot should be captured when screenshot_on_peak=True."""
-        config.screenshot_on_peak = True
+        """Screenshot should be captured when actions.screenshot is on."""
+        config.actions.screenshot = True
         recorder = MockRecorder()
         manager = AlertManager(config, recorder=recorder)
 
@@ -243,7 +247,7 @@ class TestAlertManager:
         """Screenshot capture errors (timeout, non-zero exit, missing ffmpeg)
         must not crash the daemon thread they run on.
         """
-        config.screenshot_on_peak = True
+        config.actions.screenshot = True
         recorder = MagicMock()
         recorder.is_recording.return_value = False
         recorder.capture_frame.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=10)
@@ -255,8 +259,8 @@ class TestAlertManager:
         recorder.capture_frame.assert_called_once()
 
     def test_no_screenshot_when_disabled(self, config):
-        """No screenshot when screenshot_on_peak=False."""
-        config.screenshot_on_peak = False
+        """No screenshot when actions.screenshot is off."""
+        config.actions.screenshot = False
         recorder = MockRecorder()
         manager = AlertManager(config, recorder=recorder)
 
@@ -281,7 +285,7 @@ class TestMotionTrigger:
             motion_min_frames=3,
             motion_window_s=1.0,
             record_min_s=0.0,
-            screenshot_on_peak=False,
+            actions=AlertActionsConfig(clip=True),
         )
 
     @pytest.fixture
@@ -459,7 +463,7 @@ class TestClipLength:
             trigger_high=0.1,
             trigger_low=0.05,
             cooldown_s=1.0,
-            screenshot_on_peak=False,
+            actions=AlertActionsConfig(clip=True),
             record_min_s=0.0,
         )
 
@@ -535,7 +539,7 @@ class TestMinimumClipLength:
             trigger_low=0.05,
             cooldown_s=1.0,
             record_min_s=15.0,
-            screenshot_on_peak=False,
+            actions=AlertActionsConfig(clip=True),
         )
 
     @pytest.fixture

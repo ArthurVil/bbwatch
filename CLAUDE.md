@@ -49,9 +49,11 @@ USB Mic → FFmpeg/SlidingWindowCapture → WAV segments (disk)
                                               ↓
                                        AlertManager ← MotionDetector (sustained motion)
                                               ↓
-                                       FFmpegRecorder (clips + screenshots, data/<kind>/YYYY-MM-DD/)
+                                       AlertActions (alerts.actions, chosen at startup; default: overlay only)
+                                              ↓  screenshot / clip via FFmpegRecorder → data/<kind>/YYYY-MM-DD/
+                                              ↓  destination cloud|both → data/outbox/<kind>/
                                               ↓  (host, opt-in: deploy/bbwatch-upload.timer)
-                                       rclone move → Google Drive
+                                       rclone move data/outbox → Google Drive
 USB Cam → go2rtc ← overlay pipe ← OverlayGenerator ← MotionDetector
                ↓
           WebRTC/RTSP → Browser / Phone
@@ -70,7 +72,8 @@ USB Cam → go2rtc ← overlay pipe ← OverlayGenerator ← MotionDetector
 | `hardware.py` | `AudioDevice`/`VideoDevice` dataclasses + output-parsing regexes shared by the detector |
 | `capture.py` | `SlidingWindowCapture` — records overlapping WAV segments via FFmpeg or ALSA |
 | `detector.py` | `SegmentHandler` (watchdog event handler) + DSP pipeline: Butterworth bandpass → RMS → `DetectionResult` |
-| `alert.py` | `AlertManager` — hysteresis state machine (trigger_high / trigger_low + cooldown); triggers clip recording and screenshot capture on alert; `heartbeat()` refreshes `status.json` liveness independent of audio activity so camera-only deployments don't read as unhealthy |
+| `alert.py` | `AlertManager` — hysteresis state machine (trigger_high / trigger_low + cooldown); passes trigger/active/clear events to `AlertActions`; `heartbeat()` refreshes `status.json` liveness independent of audio activity so camera-only deployments don't read as unhealthy |
+| `actions.py` | `AlertActions` — the alert side effects from `alerts.actions` (screenshot, clip, destination local/cloud/both), fixed at startup; creates no recorder when both are off |
 | `recording.py` | `Recorder` Protocol + `FFmpegRecorder` — captures frames/clips from the RTSP stream |
 | `motion.py` | `MotionDetector` — background thread reading RTSP/V4L2 frames, computes changed-pixel ratio; optional `zoom`/`offset_x`/`offset_y` crop the analysis ROI (before downscale) to raise effective sensitivity without affecting the streamed video |
 | `overlay_generator.py` | `OverlayGenerator` — background thread rendering matplotlib frames into a named pipe at `overlay_fps` |

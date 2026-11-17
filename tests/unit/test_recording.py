@@ -72,6 +72,34 @@ class TestBuildCommand:
         assert "-nostdin" in cmd
 
 
+class TestOnSaved:
+    def test_on_saved_gets_final_path(self, clip_path: Path) -> None:
+        saved: list[Path] = []
+        rec = FFmpegRecorder("rtsp://x")
+        with patch.object(FFmpegRecorder, "build_command", _fake_ffmpeg(WRITE_AND_EXIT_0)):
+            rec.start_recording(clip_path, 10, on_saved=saved.append)
+        assert _wait_for(lambda: saved == [clip_path])
+
+    def test_not_called_without_footage(self, clip_path: Path) -> None:
+        saved: list[Path] = []
+        rec = FFmpegRecorder("rtsp://x")
+        with patch.object(FFmpegRecorder, "build_command", _fake_ffmpeg(FAIL_NO_OUTPUT)):
+            rec.start_recording(clip_path, 10, on_saved=saved.append)
+        assert _wait_for(lambda: rec.last_error() is not None)
+        assert saved == []
+
+    def test_callback_error_is_logged_not_raised(self, clip_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        def boom(path: Path) -> None:
+            raise OSError("disk full")
+
+        rec = FFmpegRecorder("rtsp://x")
+        with caplog.at_level(logging.ERROR, logger="bbwatch.recording"):
+            with patch.object(FFmpegRecorder, "build_command", _fake_ffmpeg(WRITE_AND_EXIT_0)):
+                rec.start_recording(clip_path, 10, on_saved=boom)
+            assert _wait_for(lambda: "Post-save action failed" in caplog.text)
+        assert clip_path.exists()
+
+
 class TestClipLifecycle:
     def test_success_renames_part_to_final(self, clip_path: Path) -> None:
         rec = FFmpegRecorder("rtsp://x")
