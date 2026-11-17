@@ -5,12 +5,36 @@
 # Runs on the host (not in the bbwatch container) from bbwatch-upload.timer.
 # Opt-in: see "Remote upload" in .claude/rules/reliability.md.
 #
+# The switch lives in config.yaml (`upload.enabled`, `upload.remote`); with
+# upload.enabled false (the default) this script does nothing and exits 0.
+#
+#   BBWATCH_CONFIG         config file (default ~/bbwatch/config.yaml)
 #   BBWATCH_DATA_DIR       data dir holding clips/ and screenshots/ (default ~/bbwatch/data)
-#   BBWATCH_UPLOAD_REMOTE  rclone destination (default gdrive:bbwatch)
+#   BBWATCH_UPLOAD_REMOTE  rclone destination, overrides upload.remote
 set -uo pipefail
 
+CONFIG="${BBWATCH_CONFIG:-$HOME/bbwatch/config.yaml}"
 DATA_DIR="${BBWATCH_DATA_DIR:-$HOME/bbwatch/data}"
-REMOTE="${BBWATCH_UPLOAD_REMOTE:-gdrive:bbwatch}"
+
+# Prints "<enabled> <remote>"; an unreadable config is an error, not "off".
+if ! settings=$(python3 - "$CONFIG" <<'EOF'
+import sys, yaml
+with open(sys.argv[1]) as f:
+    upload = (yaml.safe_load(f) or {}).get("upload") or {}
+print("true" if upload.get("enabled") is True else "false", upload.get("remote") or "gdrive:bbwatch")
+EOF
+); then
+    echo "ERROR: cannot read upload settings from $CONFIG" >&2
+    exit 1
+fi
+read -r enabled config_remote <<<"$settings"
+
+if [ "$enabled" != "true" ]; then
+    echo "Upload disabled (upload.enabled is false in $CONFIG): nothing to do"
+    exit 0
+fi
+
+REMOTE="${BBWATCH_UPLOAD_REMOTE:-$config_remote}"
 status=0
 
 for kind in clips screenshots; do

@@ -38,6 +38,12 @@ alerts:
   overlay_drop_stale_frames: true   # true: drop a frame if the pipe reader lags (bounded latency, some loss)
                                      # false: wait for the reader, no loss but latency can grow unbounded
 
+# Cloud upload of alert clips/screenshots (host-side deploy/bbwatch-upload.timer).
+# false: the timer skips the upload and clips stay in data/clips on the SD card.
+upload:
+  enabled: false
+  remote: "gdrive:bbwatch"           # rclone destination
+
 # Motion detection parameters
 motion:
   threshold: 10                      # Pixel difference threshold (1-255): lower = more sensitive
