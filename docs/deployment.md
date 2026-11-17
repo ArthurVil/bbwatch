@@ -194,3 +194,8 @@ Stopping the service puts the camera back on its defaults.
 3.  **Troubleshooting**:
     - **Frozen Stream?** Check voltage (undervoltage throttles USB).
     - **No Audio?** Verify ALSA device string in `docker/go2rtc.yaml`.
+    - **Sound drops out for a few seconds?** The camera's USB mic sometimes
+      stops delivering samples. babycam's audio is a separate go2rtc source
+      (`deploy/babycam-audio.sh`) that restarts the capture after 5 s without
+      audio, so the video never freezes with it. Each restart shows in
+      `journalctl -u go2rtc` as `error=EOF url="exec:.../babycam-audio.sh"`.

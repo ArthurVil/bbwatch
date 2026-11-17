@@ -58,7 +58,7 @@ streams:
   # docker/docker-compose.yml) reads from babycam below, not this stream.
   # Kept only so the mic can be sanity-checked directly (e.g. `ffprobe
   # rtsp://127.0.0.1:8554/device_audio`) without touching babycam. No
-  # #autostart: babycam already opens plughw:CARD=Camera,DEV=0 directly and
+  # #autostart: babycam's audio source already opens plughw:CARD=Camera,DEV=0
   # continuously, and this device doesn't reliably support two concurrent
   # capture opens — autostarting this alongside babycam risks EBUSY-ing one
   # of them. Uses pcm_mulaw, not aac, for the same reason babycam does (see
@@ -90,12 +90,14 @@ streams:
   #   is full range (yuvj420p) and a bare -pix_fmt keeps that range flag.
   # - -g 10: a keyframe every 1 s, so playback starts and recovers from a lost
   #   packet within 1 s.
-  # - [1:a]volume=10dB,alimiter: the mic's hardware gain is already at max
-  #   (Mic Capture Volume 256/256) and a crying baby barely reached the alert
-  #   threshold. Boosted here, BEFORE the 8-bit mu-law encode, so quiet sounds
-  #   keep their resolution; the limiter stops loud cries from clipping. This
-  #   also raises what bbwatch's cry detection hears (it reads this stream):
-  #   alerts.trigger_high/low in config.yaml are set for this gain.
+  # - Audio is a SEPARATE source (second entry, deploy/babycam-audio.sh):
+  #   go2rtc serves video from the first and audio from the second. The USB
+  #   mic sometimes stops delivering samples without any error (ALSA hw_ptr
+  #   frozen); while it was an input of this same ffmpeg, that blocked the
+  #   whole mux and froze the live video too (5 times on 2026-11-17). Now a
+  #   mic stall only drops sound, and the wrapper restarts the capture within
+  #   5 s. It also boosts the mic by 10 dB for bbwatch's cry detection, which
+  #   reads this stream's audio.
   #
   # -fps_mode cfr -r 10: this ffmpeg process runs for as long as go2rtc
   # keeps it alive (hours, across many viewers) doing 1080p decode + overlay
@@ -136,7 +138,7 @@ streams:
   # overlay-pipe input instead; if it recurs, cross-check the go2rtc WRN
   # timestamp against bbwatch's own overlay/latency logs.
   babycam:
-    # Audio is captured directly from ALSA here rather than via the
+    # Audio is captured by its own exec (second entry) rather than via the
     # device_audio stream above: nothing published through this go2rtc
     # version (1.9.14) as AAC over RTSP ever reaches a consumer — the exec
     # producer launches, announces AAC in its SDP, and then delivers zero
@@ -151,13 +153,12 @@ streams:
     # standalone testing, but nothing should depend on consuming it.
     - "exec:ffmpeg -hide_banner -v error \
       -fflags nobuffer -flags low_delay -rtsp_transport tcp -timeout 5000000 -i rtsp://127.0.0.1:8554/device_video \
-      -f alsa -i plughw:CARD=Camera,DEV=0 \
       -f rawvideo -pixel_format rgba -video_size 1280x720 -framerate 10 -i /home/kanai/bbwatch/data/overlays/overlay.pipe \
-      -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[2:v]setpts=PTS-STARTPTS[v2];[v0][v2]overlay=0:0:shortest=0:repeatlast=1,scale=out_range=tv,format=yuv420p;[1:a]volume=10dB,alimiter=limit=0.9:level=0' \
+      -filter_complex '[0:v]setpts=PTS-STARTPTS[v0];[1:v]setpts=PTS-STARTPTS[v1];[v0][v1]overlay=0:0:shortest=0:repeatlast=1,scale=out_range=tv,format=yuv420p' \
       -fps_mode cfr -r 10 -c:v libx264 -preset ultrafast -tune zerolatency \
-      -crf 28 -maxrate 1500k -bufsize 1500k -g 10 \
-      -c:a pcm_mulaw -ar 8000 -ac 1 \
+      -crf 28 -maxrate 1500k -bufsize 1500k -g 10 -an \
       -f rtsp {output}"
+    - "exec:/home/kanai/bbwatch/deploy/babycam-audio.sh {output}"
 
 api:
   listen: ":1984"
