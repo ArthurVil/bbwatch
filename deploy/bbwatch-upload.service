@@ -8,8 +8,7 @@ Type=oneshot
 # The user whose ~/.config/rclone/rclone.conf holds the gdrive: remote
 User=kanai
 Environment=BBWATCH_DATA_DIR=/home/kanai/bbwatch/data
-Environment=BBWATCH_CONFIG=/home/kanai/bbwatch/config.yaml
-# On/off switch and rclone destination: upload.enabled / upload.remote in config.yaml
+Environment=BBWATCH_UPLOAD_REMOTE=gdrive:bbwatch
 ExecStart=/home/kanai/bbwatch/deploy/bbwatch-upload.sh
 # A slow upload must not wedge the timer forever
 TimeoutStartSec=30min

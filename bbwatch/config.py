@@ -282,18 +282,6 @@ class WatchdogConfig(StrictModel):
     video_recovered_message: str = Field(default="bbwatch: live video is flowing again")
 
 
-class UploadConfig(StrictModel):
-    """Cloud upload switch, read by the HOST script deploy/bbwatch-upload.sh.
-
-    The bbwatch package itself never uploads anything (see
-    .claude/rules/reliability.md); this section only lives here so the switch
-    sits in config.yaml next to everything else and gets validated.
-    """
-
-    enabled: bool = Field(default=False)
-    remote: str = Field(default="gdrive:bbwatch", min_length=1)
-
-
 class BBWatchConfig(BaseSettings):
     """Main configuration for bbwatch."""
 
@@ -310,7 +298,6 @@ class BBWatchConfig(BaseSettings):
     motion: MotionConfig = Field(default_factory=MotionConfig)
     host: HostConfig = Field(default_factory=HostConfig)
     watchdog: WatchdogConfig = Field(default_factory=WatchdogConfig)
-    upload: UploadConfig = Field(default_factory=UploadConfig)
 
     # Runtime options
     log_level: str = Field(default="INFO")

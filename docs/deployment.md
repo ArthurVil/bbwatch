@@ -101,9 +101,7 @@ Tune with `motion.motion_threshold_percent`, `alerts.motion_min_frames`,
 To view recordings from anywhere, a host-side systemd timer uploads finished
 files to Google Drive with `rclone move` every minute (local copies are deleted
 once uploaded; during a network outage they wait on the SD card and upload
-later). It is **opt-in** and runs outside the bbwatch container. It is
-switched on and off by `upload.enabled` in `config.yaml` (default `false`: the
-timer then does nothing and clips stay in `data/clips` on the SD card).
+later). It is **opt-in** and runs outside the bbwatch container.
 
 1.  Configure an rclone remote named `gdrive` for the user that owns `~/bbwatch`
     (`rclone config`, type `drive`), and check it: `rclone lsd gdrive:`.
@@ -114,9 +112,7 @@ timer then does nothing and clips stay in `data/clips` on the SD card).
     sudo systemctl daemon-reload
     sudo systemctl enable --now bbwatch-upload.timer
     ```
-3.  Set `upload.enabled: true` (and `upload.remote` if not `gdrive:bbwatch`)
-    in `config.yaml`. No restart is needed: the next timer run picks it up.
-4.  Check it:
+3.  Check it:
     ```bash
     systemctl list-timers bbwatch-upload.timer
     journalctl -u bbwatch-upload -n 50

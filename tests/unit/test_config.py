@@ -214,23 +214,3 @@ alerts:
         config = BBWatchConfig()
         assert config.log_level == "ERROR"
         assert config.fake_hardware is True
-
-
-class TestUploadConfig:
-    """The host upload script's switch must default to off."""
-
-    def test_upload_disabled_by_default(self):
-        from bbwatch.config import UploadConfig
-
-        cfg = UploadConfig()
-        assert cfg.enabled is False
-        assert cfg.remote == "gdrive:bbwatch"
-
-    def test_shipped_config_has_upload_disabled(self):
-        from pathlib import Path
-
-        from bbwatch.config import BBWatchConfig
-
-        root = Path(__file__).resolve().parents[2]
-        cfg = BBWatchConfig.from_yaml(root / "config.yaml")
-        assert cfg.upload.enabled is False
