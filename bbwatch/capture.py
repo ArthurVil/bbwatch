@@ -14,6 +14,17 @@ from typing import IO
 
 LOGGER = logging.getLogger(__name__)
 
+# A run this long counts as healthy: the next death starts a fresh series of
+# fast restarts. Without this, occasional stream hiccups over days of uptime
+# eventually used up max_restarts and cry detection stopped for good.
+STABLE_RUN_S = 60.0
+# After max_restarts consecutive fast failures, keep retrying at this pace
+# instead of giving up (the source, e.g. go2rtc, usually comes back).
+BACKOFF_RESTART_S = 30.0
+# RTSP read timeout (microseconds): a stalled stream makes FFmpeg exit, so
+# the monitor restarts it, instead of waiting for data forever.
+RTSP_TIMEOUT_US = 5_000_000
+
 
 class AudioCapture:
     """Captures audio from ALSA device using FFmpeg.
@@ -53,6 +64,7 @@ class AudioCapture:
         self._stop_event = threading.Event()
         self._restart_count = 0
         self._max_restarts = 10
+        self._started_at = float("-inf")
         # Bounded tail of FFmpeg stderr, filled by a drain thread (deque
         # appends are thread-safe); unbounded buffering would leak on a
         # chatty input, an undrained pipe would wedge FFmpeg.
@@ -72,7 +84,7 @@ class AudioCapture:
             "-loglevel",
             "warning",
             # Input: ALSA device or Network Stream
-            *(["-i", self.device] if "://" in self.device else ["-f", "alsa", "-i", self.device]),
+            *self._input_args(),
             # Audio settings
             "-ac",
             str(self.channels),
@@ -88,6 +100,14 @@ class AudioCapture:
             "-y",  # Overwrite output files
             output_pattern,
         ]
+
+    def _input_args(self) -> list[str]:
+        """FFmpeg input options: an RTSP stream (with a read timeout) or an ALSA device."""
+        if self.device.startswith("rtsp://"):
+            return ["-rtsp_transport", "tcp", "-timeout", str(RTSP_TIMEOUT_US), "-i", self.device]
+        if "://" in self.device:
+            return ["-i", self.device]
+        return ["-f", "alsa", "-i", self.device]
 
     def start(self) -> None:
         """Start audio capture.
@@ -119,6 +139,7 @@ class AudioCapture:
         cmd = self._build_command()
         LOGGER.debug(f"Starting FFmpeg: {' '.join(cmd)}")
 
+        self._started_at = time.monotonic()
         try:
             self._process = subprocess.Popen(
                 cmd,
@@ -197,17 +218,25 @@ class AudioCapture:
 
                 LOGGER.error(f"FFmpeg process died (exit={exit_code}): {stderr[-500:]}")
 
-                if self._restart_count < self._max_restarts:
-                    self._restart_count += 1
+                if time.monotonic() - self._started_at >= STABLE_RUN_S:
+                    self._restart_count = 0  # it had been healthy: a new failure series
+
+                self._restart_count += 1
+                if self._restart_count <= self._max_restarts:
+                    delay = 1.0
                     LOGGER.warning(f"Restarting FFmpeg (attempt {self._restart_count})")
-                    time.sleep(1.0)  # Brief delay before restart
-                    try:
-                        self._start_process()
-                    except RuntimeError as e:
-                        LOGGER.error(f"Failed to restart FFmpeg: {e}")
                 else:
-                    LOGGER.critical(f"Max restart attempts ({self._max_restarts}) exceeded")
+                    delay = BACKOFF_RESTART_S
+                    LOGGER.critical(
+                        f"FFmpeg failed {self._restart_count} times in a row - "
+                        f"retrying every {BACKOFF_RESTART_S:.0f} s"
+                    )
+                if self._stop_event.wait(delay):
                     break
+                try:
+                    self._start_process()
+                except RuntimeError as e:
+                    LOGGER.error(f"Failed to restart FFmpeg: {e}")
 
     def __enter__(self) -> "AudioCapture":
         """Context manager entry."""
