@@ -147,7 +147,36 @@ Drive-side retention is not managed — delete old days from Drive yourself.
 Do not point bbwatch at an `rclone mount` instead: writing live recordings to a
 FUSE-mounted Drive loses footage whenever the network drops.
 
-## 6. Deployment Verification
+## 6. Night Image Profile (USB IR camera)
+
+The USB camera switches to IR (grayscale) by itself in the dark. Its default
+IR image is washed out (shadows at mid-grey, sharpening grain). A host service
+applies a night profile in the camera itself while it is in IR mode, and
+restores the defaults (color view unchanged) as soon as the image is in color
+again. No latency or CPU is added to the streaming pipeline.
+
+| profile | brightness | contrast | sharpness | backlight_compensation |
+|---|---|---|---|---|
+| night (IR) | -24 | 40 | 1 | 0 |
+| day (color, camera defaults) | 0 | 32 | 3 | 1 |
+
+Mode is detected every 20 s from the saturation of a few `raw_video` frames
+(IR is exactly 0). Settings are re-applied if the camera is re-plugged.
+
+```bash
+sudo cp deploy/bbwatch-camtune.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now bbwatch-camtune.service
+journalctl -u bbwatch-camtune -n 20                  # mode changes
+v4l2-ctl -d /dev/video0 -C brightness,contrast,sharpness,backlight_compensation
+```
+
+Tune the profiles with `CAMTUNE_NIGHT` / `CAMTUNE_DAY` (`Environment=` in the
+unit). The profile also changes the image motion detection sees; switching
+profiles is one whole-frame change, at the moment the light changes anyway.
+Stopping the service puts the camera back on its defaults.
+
+## 7. Deployment Verification
 
 1.  **Check Logs**:
     ```bash

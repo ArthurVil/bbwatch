@@ -1,0 +1,18 @@
+[Unit]
+Description=bbwatch camera night profile (applies IR image settings while the camera is in IR mode)
+After=go2rtc.service
+Wants=go2rtc.service
+
+[Service]
+Type=simple
+# A user with access to /dev/video0 (video group)
+User=kanai
+ExecStart=/home/kanai/bbwatch/deploy/bbwatch-camtune.sh
+# Leave the camera on its defaults (the day profile) when this stops
+ExecStopPost=/usr/bin/v4l2-ctl -d /dev/video0 -c brightness=0 -c contrast=32 -c gamma=100 -c sharpness=3 -c backlight_compensation=1
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
