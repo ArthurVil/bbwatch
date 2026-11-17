@@ -1,27 +1,23 @@
-"""Alert system with hysteresis logic and action handling.
+"""Alert state machine with hysteresis.
 
-Manages the alert state machine to prevent rapid oscillations (hysteresis),
-writes status for the overlay, and handles side effects like recording clips.
+Decides when an alert is on and writes status.json for the overlay. What an
+alert *does* besides showing on the overlay (screenshots, clips, where they
+go) is the job of ``bbwatch.actions.AlertActions``, configured at startup.
 """
 
 import enum
 import json
 import logging
-import subprocess
 import threading
 import time
+from collections import deque
 from dataclasses import asdict, dataclass
-from datetime import datetime
 
+from bbwatch.actions import AlertActions
 from bbwatch.config import AlertConfig
-from bbwatch.recording import FFmpegRecorder, Recorder
+from bbwatch.recording import Recorder
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _timestamp_filename() -> str:
-    """Generate timestamp string for filenames (YYYYMMDD_HHMMSS)."""
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 class AlertState(str, enum.Enum):
@@ -41,17 +37,32 @@ class AlertStatus:
     alert_active: bool  # True if TRIGGERED (compatibility)
     timestamp: float
     intensity: float
+    trigger_source: str | None = None  # "audio" | "motion" | "both" while an input is hot
 
 
 class AlertManager:
-    """Manages alert state transitions and side effects."""
+    """Manages alert state transitions and side effects.
 
-    def __init__(self, config: AlertConfig, recorder: Recorder | None = None):
+    Two inputs drive one IDLE/TRIGGERED/COOLDOWN state machine:
+
+    - audio: ``process_intensity`` with trigger_high/trigger_low hysteresis
+      (watchdog observer thread)
+    - motion: ``process_motion``, hot while at least ``motion_min_frames``
+      frames in the last ``motion_window_s`` exceeded the motion threshold
+      (main loop thread)
+
+    The alert is active while either input is hot; it enters cooldown when
+    both are quiet and returns to idle after ``cooldown_s``. Transitions are
+    passed to an ``AlertActions`` for the configured side effects.
+    """
+
+    def __init__(self, config: AlertConfig, recorder: Recorder | None = None, actions: AlertActions | None = None):
         """Initialize alert manager.
 
         Args:
             config: Alert configuration.
-            recorder: Video recorder; defaults to FFmpegRecorder using config.stream_url.
+            recorder: Video recorder for the default AlertActions (tests inject a mock).
+            actions: Alert side effects; defaults to AlertActions(config.actions).
         """
         self.config = config
         self._state = AlertState.IDLE
@@ -59,16 +70,19 @@ class AlertManager:
         self._cooldown_start_time = 0.0
         self._current_intensity = 0.0
         self._last_latency_ms: float | None = None
-        self._recorder: Recorder = recorder if recorder is not None else FFmpegRecorder(config.stream_url)
+        self._audio_hot = False
+        self._motion_hot = False
+        self._motion_frame_times: deque[float] = deque()
+        self._last_motion_sample: int | None = None
+        self._actions = actions if actions is not None else AlertActions(config, recorder)
+        # Serializes state-machine updates: audio arrives on the watchdog
+        # observer thread, motion on the main loop thread.
+        self._state_lock = threading.RLock()
         # Guards status.json writes: process_intensity() runs on the watchdog
         # observer thread, heartbeat() on the main loop thread. Both write to
         # the same fixed temp-file path — without a lock, concurrent writes
         # could interleave or race the rename.
         self._status_lock = threading.Lock()
-
-        # Pre-create output directories
-        self.config.screenshots_dir.mkdir(parents=True, exist_ok=True)
-        self.config.clips_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def current_intensity(self) -> float:
@@ -77,13 +91,40 @@ class AlertManager:
 
     @property
     def alert_active(self) -> bool:
-        """Check if alert is currently triggered."""
+        """Check if alert is currently triggered (by any source)."""
         return self._state == AlertState.TRIGGERED
+
+    @property
+    def audio_active(self) -> bool:
+        """True while the audio input is above its hysteresis band (cry indicator)."""
+        return self._audio_hot
 
     @property
     def current_state(self) -> AlertState:
         """Get current alert state."""
         return self._state
+
+    @property
+    def trigger_source(self) -> str | None:
+        """Which inputs are currently hot: "audio", "motion", "both" or None."""
+        motion = self._motion_hot and self.config.motion_triggers_alert
+        if self._audio_hot and motion:
+            return "both"
+        if self._audio_hot:
+            return "audio"
+        if motion:
+            return "motion"
+        return None
+
+    @property
+    def recording_error(self) -> str | None:
+        """Last clip recording failure, None if the most recent clip succeeded."""
+        return self._actions.recording_error
+
+    def shutdown(self) -> None:
+        """Finalize any in-progress clip (called on monitor stop)."""
+        with self._state_lock:
+            self._actions.shutdown()
 
     @property
     def last_latency_ms(self) -> float | None:
@@ -94,8 +135,8 @@ class AlertManager:
         """Update state based on new intensity measurement.
 
         Implements hysteresis:
-        - Triggers when intensity > trigger_high
-        - Clears when intensity < trigger_low
+        - Audio becomes hot when intensity > trigger_high
+        - Audio goes quiet when intensity < trigger_low
 
         Args:
             intensity: Current RMS intensity (0.0 - 1.0).
@@ -104,30 +145,54 @@ class AlertManager:
             Current status object.
         """
         now = time.time()
-        self._current_intensity = intensity
-        if capture_ts is not None:
-            self._last_latency_ms = (now - capture_ts) * 1000.0
+        with self._state_lock:
+            self._current_intensity = intensity
+            if capture_ts is not None:
+                self._last_latency_ms = (now - capture_ts) * 1000.0
 
-        if self._state == AlertState.IDLE:
             if intensity > self.config.trigger_high:
-                self._transition_to(AlertState.TRIGGERED, now, intensity)
+                self._audio_hot = True
+            elif intensity < self.config.trigger_low:
+                self._audio_hot = False
 
-        elif self._state == AlertState.TRIGGERED:
-            if intensity < self.config.trigger_low:
-                self._transition_to(AlertState.COOLDOWN, now, intensity)
-            else:
-                # Still triggered, update timestamp (keep alive)
-                self._last_trigger_time = now
-
-        elif self._state == AlertState.COOLDOWN:
-            if intensity > self.config.trigger_high:
-                # Re-trigger immediately
-                self._transition_to(AlertState.TRIGGERED, now, intensity)
-            elif now - self._cooldown_start_time > self.config.cooldown_s:
-                self._transition_to(AlertState.IDLE, now, intensity)
-
-        status = self._current_status(now)
+            self._evaluate(now)
+            status = self._current_status(now)
         self._write_status(status)
+        return status
+
+    def process_motion(self, motion_detected: bool, sample_id: int | None = None) -> AlertStatus:
+        """Update state from the motion detector (called at main-loop rate).
+
+        Motion is hot while at least ``motion_min_frames`` frames within the
+        last ``motion_window_s`` were above the threshold. They need not be
+        consecutive — real movement flickers frame to frame — but requiring
+        a few filters a single-frame lighting jump. Only state changes are
+        written to status.json here — the main loop heartbeat refreshes it
+        every second anyway.
+
+        Args:
+            motion_detected: Current motion level is above the motion threshold.
+            sample_id: Frame sequence number from the detector. The main loop
+                polls faster than the camera frame rate; a repeated id is the
+                same frame and is not counted again. None counts every call.
+
+        Returns:
+            Current status object.
+        """
+        now = time.time()
+        with self._state_lock:
+            new_frame = sample_id is None or sample_id != self._last_motion_sample
+            self._last_motion_sample = sample_id
+            if motion_detected and new_frame:
+                self._motion_frame_times.append(now)
+            while self._motion_frame_times and now - self._motion_frame_times[0] > self.config.motion_window_s:
+                self._motion_frame_times.popleft()
+            self._motion_hot = len(self._motion_frame_times) >= self.config.motion_min_frames
+
+            changed = self._evaluate(now)
+            status = self._current_status(now)
+        if changed:
+            self._write_status(status)
         return status
 
     def heartbeat(self) -> AlertStatus:
@@ -141,7 +206,8 @@ class AlertManager:
         loop calls this periodically so liveness reflects the process, not
         audio activity specifically.
         """
-        status = self._current_status(time.time())
+        with self._state_lock:
+            status = self._current_status(time.time())
         self._write_status(status)
         return status
 
@@ -153,14 +219,51 @@ class AlertManager:
             alert_active=(self._state == AlertState.TRIGGERED),
             timestamp=now,
             intensity=self._current_intensity,
+            trigger_source=self.trigger_source,
         )
 
-    def _transition_to(self, new_state: AlertState, now: float, intensity: float) -> None:
+    def _evaluate(self, now: float) -> bool:
+        """Advance the state machine from the current inputs. Caller holds _state_lock.
+
+        Returns:
+            True if the state changed.
+        """
+        before = self._state
+        active = self.trigger_source is not None
+
+        self._actions.tick(now)
+
+        if self._state == AlertState.IDLE:
+            if active:
+                self._transition_to(AlertState.TRIGGERED, now)
+
+        elif self._state == AlertState.TRIGGERED:
+            if not active:
+                self._transition_to(AlertState.COOLDOWN, now)
+            else:
+                # Still triggered, update timestamp (keep alive)
+                self._last_trigger_time = now
+                # e.g. a clip that hit record_max_s rolls over
+                self._actions.on_active(now)
+
+        elif self._state == AlertState.COOLDOWN:
+            if active:
+                # Re-trigger immediately
+                self._transition_to(AlertState.TRIGGERED, now)
+            elif now - self._cooldown_start_time > self.config.cooldown_s:
+                self._transition_to(AlertState.IDLE, now)
+
+        return self._state != before
+
+    def _transition_to(self, new_state: AlertState, now: float) -> None:
         """Handle state transition side effects."""
-        LOGGER.info(f"Alert State: {self._state.value} -> {new_state.value} (intensity={intensity:.3f})")
+        LOGGER.info(
+            f"Alert State: {self._state.value} -> {new_state.value} "
+            f"(source={self.trigger_source}, intensity={self._current_intensity:.3f})"
+        )
 
         if new_state == AlertState.TRIGGERED:
-            self._handle_trigger(intensity)
+            self._handle_trigger(now)
             self._last_trigger_time = now
 
         elif new_state == AlertState.COOLDOWN:
@@ -168,7 +271,7 @@ class AlertManager:
             self._cooldown_start_time = now
 
         elif new_state == AlertState.IDLE:
-            self._handle_idle()
+            self._handle_idle(now)
 
         self._state = new_state
 
@@ -183,36 +286,16 @@ class AlertManager:
         except OSError as e:
             LOGGER.error(f"Failed to write status file: {e}")
 
-    def _handle_trigger(self, intensity: float) -> None:
+    def _handle_trigger(self, now: float) -> None:
         """Called when alert is triggered."""
-        LOGGER.info("🚨 ALERT TRIGGERED - Starting recording/screenshot")
-
-        if self.config.screenshot_on_peak:
-            threading.Thread(target=self._take_screenshot, daemon=True).start()
-
-        if not self._recorder.is_recording():
-            output_path = self.config.clips_dir / f"{_timestamp_filename()}.mp4"
-            try:
-                self._recorder.start_recording(output_path, self.config.record_clip_s)
-                LOGGER.info(f"Recording started: {output_path.name}")
-            except RuntimeError:
-                LOGGER.warning("Recording already in progress")
-            except FileNotFoundError as e:
-                LOGGER.error(f"Recording failed (ffmpeg not found): {e}")
+        LOGGER.info(f"🚨 ALERT TRIGGERED (source={self.trigger_source})")
+        self._actions.on_trigger(now)
 
     def _handle_cooldown(self) -> None:
-        """Called when alert enters cooldown (intensity drops)."""
+        """Called when alert enters cooldown (all inputs quiet)."""
         LOGGER.info("Alert signal dropped - entering cooldown")
 
-    def _handle_idle(self) -> None:
+    def _handle_idle(self, now: float) -> None:
         """Called when alert clears completely."""
-        LOGGER.info("Alert cleared - stopping recording")
-        self._recorder.stop_recording()
-
-    def _take_screenshot(self) -> None:
-        output_path = self.config.screenshots_dir / f"{_timestamp_filename()}.jpg"
-        try:
-            self._recorder.capture_frame(output_path)
-            LOGGER.info(f"Screenshot saved: {output_path.name}")
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError) as e:
-            LOGGER.error(f"Screenshot failed: {type(e).__name__}: {e}")
+        LOGGER.info("Alert cleared")
+        self._actions.on_clear(now)

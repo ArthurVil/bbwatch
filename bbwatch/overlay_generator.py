@@ -63,6 +63,7 @@ class OverlayGenerator:
         fps: int = 5,
         history_len: int = 50,
         latency_report_interval_s: float = 10.0,
+        drop_stale_frames: bool = True,
     ) -> None:
         """Initialize overlay generator.
 
@@ -73,6 +74,11 @@ class OverlayGenerator:
             fps: Target frames per second.
             history_len: Number of data points to keep for plotting.
             latency_report_interval_s: Seconds between latency summaries.
+            drop_stale_frames: True (default) drops a frame when the pipe
+                reader isn't ready, always sending the freshest state next
+                pass — bounded latency, some loss. False waits for the
+                reader instead, delivering every frame with no loss but
+                latency that grows unbounded if the reader falls behind.
         """
         self.pipe_path = Path(pipe_path)
         self.width = width
@@ -80,7 +86,8 @@ class OverlayGenerator:
         self.fps = fps
         self.history_len = history_len
         self.running = False
-        self._latency = LatencyTracker("overlay", report_interval_s=latency_report_interval_s)
+        self.drop_stale_frames = drop_stale_frames
+        self._latency = LatencyTracker("overlay", report_interval_s=latency_report_interval_s, track_drops=True)
 
         # History for plotting
         self.motion_history = deque([0.0] * self.history_len, maxlen=self.history_len)
@@ -208,6 +215,11 @@ class OverlayGenerator:
         completion: FFmpeg's rawvideo demuxer has no framing markers, so a
         partial frame desyncs the stream permanently.
 
+        One exception: `stop()` clearing `running` mid-write does exit the
+        loop early with a partial frame still unsent. That's accepted as a
+        shutdown-only edge case — the fd is closed right behind it — rather
+        than one this method guards against.
+
         Raises:
             BrokenPipeError: The reader disconnected mid-frame.
         """
@@ -268,20 +280,35 @@ class OverlayGenerator:
                         frame_data = self.generate_frame()
                         timer.mark("render")
 
-                        # Check writability before starting a frame (100ms timeout).
-                        # select returns (rlist, wlist, xlist) — the fd is in the
-                        # WRITE list. If the reader is not keeping up, drop the
-                        # whole frame here; a frame must never be started and
-                        # abandoned (rawvideo has no framing markers).
-                        _, writable, _ = select.select([], [fd], [], 0.1)
-                        if writable:
-                            try:
+                        dropped = False
+                        try:
+                            if self.drop_stale_frames:
+                                # Check writability before starting a frame (100ms
+                                # timeout). select returns (rlist, wlist, xlist) —
+                                # the fd is in the WRITE list. If the reader isn't
+                                # keeping up, drop the whole frame here — a frame
+                                # must never be started and abandoned (rawvideo has
+                                # no framing markers) — and let the next pass send
+                                # a fresher one instead of queuing a stale one.
+                                _, writable, _ = select.select([], [fd], [], 0.1)
+                                if writable:
+                                    self._write_frame(fd, frame_data)
+                                    timer.mark("write")
+                                else:
+                                    dropped = True
+                            else:
+                                # No-loss mode: skip the readiness gate and always
+                                # deliver this frame. _write_frame's own retry loop
+                                # already blocks on backpressure until the reader
+                                # drains the pipe, so every frame gets through —
+                                # at the cost of unbounded latency if the reader
+                                # can't keep up.
                                 self._write_frame(fd, frame_data)
                                 timer.mark("write")
-                            except BrokenPipeError:
-                                LOGGER.warning("Pipe broken (reader disconnected), reconnecting...")
-                                break
-                        self._latency.record(timer)
+                        except BrokenPipeError:
+                            LOGGER.warning("Pipe broken (reader disconnected), reconnecting...")
+                            break
+                        self._latency.record(timer, dropped=dropped)
 
                         if time.time() - last_log > 5.0:
                             with self._lock:
@@ -311,7 +338,21 @@ class OverlayGenerator:
         self.thread.start()
 
     def stop(self) -> None:
-        """Stop the loop."""
+        """Stop the loop.
+
+        `_write_frame` only re-checks `running` between write attempts, so a
+        stalled reader (most reachable with `drop_stale_frames=False`, where
+        every frame — not just ones that passed a readiness check — can end
+        up blocked there) can make the join below outrun its timeout. That
+        must be visible, not a quiet "stop() returned" with the thread still
+        alive underneath.
+        """
         self.running = False
         if hasattr(self, "thread"):
             self.thread.join(timeout=1.0)
+            if self.thread.is_alive():
+                LOGGER.error(
+                    "Overlay thread did not stop within 1s (likely blocked writing to a "
+                    "stalled pipe reader) — it will keep running as a daemon thread until "
+                    "the process exits."
+                )

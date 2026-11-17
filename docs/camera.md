@@ -61,6 +61,59 @@ needed: lower fps (longer max exposure), and rpicam options for gain/exposure
 ceilings. Motion detection thresholds (`motion.threshold`) may need raising at
 night since sensor noise inflates frame-to-frame differences.
 
+**Auto-exposure convergence as a false-motion source.** Frame differencing
+can't distinguish "the whole frame got brighter" from real motion — every
+pixel shifts together and can spike the changed-pixel percentage well past
+`motion_threshold_percent`, exactly when the AE loop is working hardest (a
+dimming room at night). Two independent mitigations, addressing it from
+opposite ends:
+
+- **Software** (`motion.equalize_luminosity`, in `config.yaml`): normalizes
+  brightness before differencing using a LUT calibrated **once from the
+  first frame and frozen** for the process's life — see
+  `MotionDetector._build_luminosity_lut` in `bbwatch/motion.py`. This design
+  went through two failed revisions first, both live-tested:
+  1. **CLAHE, recomputed every frame.** Its clip limit (needed to avoid
+     amplifying noise) also breaks exact invariance to a brightness shift —
+     measured >50% false motion on a pure exposure shift.
+  2. **Global `cv2.equalizeHist`, recomputed every frame.** Exactly
+     invariant to a shift in principle, but in a genuinely dim/low-contrast
+     room, two consecutive noisy frames of the same static scene produce
+     slightly different histograms — so each gets its own
+     slightly-different mapping, and *that* difference alone reads as
+     motion. Deployed, then reported live as near-constant flicker ("2 of 3
+     frames") after dimming a room.
+
+  The current design's **proven** fix is `clahe_clip_limit` (default `2.0`,
+  OpenCV's typical CLAHE default): it bounds noise amplification directly,
+  frozen or not — measured 0% false motion on a synthetic reproduction of
+  the reported bug at `clahe_clip_limit: 2.0`, whether the LUT was frozen
+  or recomputed fresh every frame at that same limit, vs. ~45% at an
+  effectively unclipped limit either way. Freezing the LUT from a single
+  calibration frame is kept as *additional, unproven-by-test* insurance —
+  it removes any dependence on two real frames' histograms staying
+  statistically similar, which held for the simple per-pixel noise this
+  was tested against but isn't guaranteed against compression artifacts,
+  correlated sensor read noise, or continuous micro-exposure drift.
+  Freezing's one definite cost: a real brightness change *after* the first
+  frame — a curtain closing, day turning to night — is not tracked; the
+  mapping is calibrated once and never revisited until the process
+  restarts. (Periodic recalibration was considered and explicitly rejected
+  in favor of simplicity.)
+- **Camera-level** (not currently applied — see the commented example in
+  `deploy/go2rtc-host.yaml`'s `device_video` stream): fixing `--shutter`
+  (µs) and `--gain` removes AE hunting at the source entirely, at the cost
+  of losing auto-adaptation to real brightness changes in the room (a lamp
+  turning on/off would then look identical to the camera). Needs a value
+  tuned to the actual room and left as an opt-in example rather than a
+  default for that reason.
+
+Start with the software option and a conservative `clahe_clip_limit` (2.0).
+Camera-level locking is worth revisiting if a room's AE hunting is severe
+enough that a one-shot calibration isn't enough — e.g. the room's brightness
+genuinely changes often enough that "calibrated once at startup" stops being
+a reasonable approximation.
+
 ## Can the on-board accelerator encode/compress video? No — but it can offload something better
 
 The IMX500's accelerator is a **neural-network inference DSP, not a video

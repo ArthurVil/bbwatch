@@ -1,10 +1,11 @@
 import subprocess
 import sys
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bbwatch.capture import AudioCapture, SlidingWindowCapture
+from bbwatch.capture import BACKOFF_RESTART_S, RTSP_TIMEOUT_US, STABLE_RUN_S, AudioCapture, SlidingWindowCapture
 
 
 @pytest.fixture
@@ -171,25 +172,65 @@ def test_monitor_loop_restarts_ffmpeg_after_it_dies(capture, mock_subprocess):
     assert mock_subprocess.call_count == 1  # one restart via _start_process (no initial start() call here)
 
 
-def test_monitor_loop_thread_restarts_and_gives_up_after_max_restarts(capture, mock_subprocess):
-    """End-to-end via the real monitor thread: death -> restart, repeated
-    until _max_restarts is exceeded, at which point the loop gives up
-    instead of restart-looping forever.
+def _run_monitor(capture, waits_before_stop):
+    """Run the real _monitor_loop with instant sleeps; returns the restart delays used."""
+    delays = []
+
+    def fake_wait(timeout=None):
+        delays.append(timeout)
+        return len(delays) >= waits_before_stop  # True = stop requested
+
+    with patch("bbwatch.capture.time.sleep"), patch.object(capture._stop_event, "wait", side_effect=fake_wait):
+        capture._monitor_loop()
+    return delays
+
+
+def test_monitor_loop_backs_off_instead_of_giving_up(capture, mock_subprocess):
+    """Regression: after max_restarts consecutive failures the loop used to
+    stop for good, leaving cry detection down until bbwatch was restarted.
+    It must keep retrying, at the slower backoff pace.
     """
     process_mock = mock_subprocess.return_value
-    process_mock.poll.return_value = 1  # "already dead" from the first check
+    process_mock.poll.return_value = 1  # every start dies immediately
     process_mock.returncode = 1
 
     capture._max_restarts = 2
     capture._stop_event.clear()
     capture._process = process_mock
+    capture._started_at = time.monotonic()
 
-    with patch("bbwatch.capture.time.sleep"):
-        capture._monitor_loop()  # runs to completion once max_restarts exceeded
+    delays = _run_monitor(capture, waits_before_stop=4)
 
-    assert capture._restart_count == 2
-    # initial _process assigned manually + 2 restarts via _start_process
-    assert mock_subprocess.call_count == 2
+    assert delays == [1.0, 1.0, BACKOFF_RESTART_S, BACKOFF_RESTART_S]
+    assert mock_subprocess.call_count == 3  # the 4th wait requested stop before restarting
+
+
+def test_monitor_loop_resets_count_after_a_stable_run(capture, mock_subprocess):
+    """A death after a long healthy run starts a new series of fast restarts."""
+    process_mock = mock_subprocess.return_value
+    process_mock.poll.return_value = 1
+    process_mock.returncode = 1
+
+    capture._max_restarts = 2
+    capture._restart_count = 7  # earlier failures, long ago
+    capture._stop_event.clear()
+    capture._process = process_mock
+    capture._started_at = time.monotonic() - STABLE_RUN_S - 1
+
+    delays = _run_monitor(capture, waits_before_stop=1)
+
+    assert delays == [1.0]
+    assert capture._restart_count == 1
+
+
+def test_rtsp_input_has_read_timeout(tmp_path):
+    """A stalled RTSP stream must make FFmpeg exit (and be restarted)
+    rather than wait for data forever."""
+    cmd = AudioCapture(device="rtsp://host:8554/babycam", output_dir=tmp_path)._build_command()
+    i = cmd.index("-i")
+    assert cmd[i + 1] == "rtsp://host:8554/babycam"
+    assert cmd[i - 4 : i] == ["-rtsp_transport", "tcp", "-timeout", str(RTSP_TIMEOUT_US)]
+    assert "alsa" not in cmd
 
 
 def test_sliding_window_start_stop(tmp_path, mock_subprocess):

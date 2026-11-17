@@ -505,7 +505,7 @@ class AlertManager:
         if self._config.record_clip_on_trigger and not self._recorder.is_recording():
             try:
                 output_path = self._config.clips_dir / f"{self._timestamp()}.mp4"
-                self._recorder.start_recording(output_path, self._config.record_clip_s)
+                self._recorder.start_recording(output_path, self._config.record_max_s)
                 LOGGER.info(f"Recording started: {output_path.name}")
             except RuntimeError as e:
                 LOGGER.warning(f"Recording: already in progress")

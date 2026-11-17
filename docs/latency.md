@@ -148,7 +148,23 @@ even more headroom than before.
 
 `write` doubles as a **backpressure gauge**: it includes waiting for go2rtc's
 FFmpeg to drain the pipe. If `render + write` exceeds the 66 ms frame budget
-(15 fps), the loop skips frames and the overlay lags the video.
+(15 fps), the delivery policy below decides what happens next.
+
+### Frame delivery policy: `alerts.overlay_drop_stale_frames`
+
+Controls what `run_loop` does when the pipe reader falls behind:
+
+- **`true` (default)**: a 100 ms readiness check gates each frame; if the pipe
+  isn't writable in time, that frame is dropped and the next pass sends
+  fresher state instead. Bounded latency, some loss under load. The periodic
+  `LATENCY overlay` summary reports `dropped=N/total (pct%)` so drops are
+  visible rather than silent.
+- **`false`**: the readiness gate is skipped — every frame is delivered,
+  waiting on `_write_frame`'s backpressure loop for as long as it takes.
+  No loss, but `write` (and therefore end-to-end latency) grows unbounded if
+  the reader can't keep up; watch the `write=avg/max` figures in the summary
+  for signs of a growing backlog. `dropped` is always `0/N (0.0%)` in this
+  mode by construction — it does *not* mean the reader is keeping up.
 
 ## External (uninstrumented) contributors
 

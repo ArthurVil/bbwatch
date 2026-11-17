@@ -1,6 +1,7 @@
+import logging
 import threading
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -17,6 +18,29 @@ def mock_cv2():
 @pytest.fixture
 def mock_pipe_path(tmp_path):
     return tmp_path / "test.pipe"
+
+
+@pytest.fixture
+def log_capture():
+    """Capture bbwatch.overlay_generator records with a plain handler.
+
+    pytest's caplog fixture is unreliable in this environment (see
+    tests/unit/test_latency.py for the same workaround).
+    """
+    records: list[logging.LogRecord] = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("bbwatch.overlay_generator")
+    handler = _Collector(level=logging.DEBUG)
+    old_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    yield records
+    logger.removeHandler(handler)
+    logger.setLevel(old_level)
 
 
 @pytest.fixture
@@ -263,6 +287,97 @@ def test_run_loop_writes_to_pipe(overlay_generator, mock_cv2):
     # must push through the FIFO regardless of drawn content.
     assert len(data) == 640 * 480 * 4
     assert data == b"\x00" * (640 * 480 * 4)
+
+
+class TestFrameDropPolicy:
+    """drop_stale_frames selects between bounded-latency-with-loss (default)
+    and no-loss-but-unbounded-latency delivery — see OverlayGenerator.__init__.
+    """
+
+    def test_drop_mode_skips_frame_when_pipe_not_ready(self, overlay_generator, mock_cv2):
+        """Default (drop_stale_frames=True): a not-writable pipe means the
+        frame is dropped outright, never handed to os.write.
+        """
+        assert overlay_generator.drop_stale_frames is True
+        write_calls = {"n": 0}
+
+        def fake_os_write(fd, data):
+            write_calls["n"] += 1
+            return len(data)
+
+        with (
+            patch("os.open", return_value=42),
+            patch("os.write", side_effect=fake_os_write),
+            patch("os.close"),
+            patch("os.mkfifo"),
+            patch("pathlib.Path.exists", return_value=False),
+            patch("select.select", return_value=([], [], [])),  # never writable
+            patch("time.sleep", side_effect=lambda *_: setattr(overlay_generator, "running", False)),
+        ):
+            overlay_generator.run_loop()
+
+        assert write_calls["n"] == 0
+
+    def test_no_loss_mode_bypasses_readiness_gate(self, mock_pipe_path, mock_cv2):
+        """drop_stale_frames=False must deliver the frame even when select
+        would have reported the pipe as not writable — proving the readiness
+        gate is bypassed, not just relaxed.
+        """
+        gen = OverlayGenerator(
+            pipe_path=mock_pipe_path,
+            width=640,
+            height=480,
+            fps=10,
+            history_len=20,
+            drop_stale_frames=False,
+        )
+        written = []
+
+        def fake_os_write(fd, data):
+            written.append(bytes(data))
+            gen.running = False  # stop after the one frame we're checking
+            return len(data)
+
+        with (
+            patch("os.open", return_value=42),
+            patch("os.write", side_effect=fake_os_write),
+            patch("os.close"),
+            patch("os.mkfifo"),
+            patch("pathlib.Path.exists", return_value=False),
+            patch("select.select", return_value=([], [], [])),  # would say "not writable" if checked
+            patch("time.sleep"),
+        ):
+            gen.run_loop()
+
+        assert len(written) == 1
+
+
+class TestStop:
+    """stop() must surface it loudly if the thread outlives its join timeout.
+
+    Most reachable with drop_stale_frames=False: _write_frame can be blocked
+    on backpressure for every frame, not just ones that passed a readiness
+    check, so a stalled reader can make join(timeout=1.0) time out.
+    """
+
+    def test_logs_error_when_thread_survives_join(self, overlay_generator, log_capture):
+        overlay_generator.thread = MagicMock()
+        overlay_generator.thread.is_alive.return_value = True
+
+        overlay_generator.stop()
+
+        overlay_generator.thread.join.assert_called_once_with(timeout=1.0)
+        errors = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
+        assert any("did not stop within 1s" in m for m in errors)
+
+    def test_no_error_logged_when_thread_stops_in_time(self, overlay_generator, log_capture):
+        overlay_generator.thread = MagicMock()
+        overlay_generator.thread.is_alive.return_value = False
+
+        overlay_generator.stop()
+
+        errors = [r.getMessage() for r in log_capture if r.levelno == logging.ERROR]
+        assert errors == []
 
 
 @pytest.mark.slow

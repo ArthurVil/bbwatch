@@ -24,7 +24,6 @@ pydantic = "^2.0.0"
 pydantic-settings = "^2.0.0"
 sounddevice = "^0.4.6"
 opencv-python = "^4.8.0"
-matplotlib = "^3.7.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"
